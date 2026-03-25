@@ -1373,9 +1373,10 @@ export const db = {
     async updateItemStatus(itemId, status) {
         const ctx = await getContext()
 
-        // Although it is technically accessible to 'manage_completion' conceptually, 
-        // passing permission check is skipped here like other item generic reads 
-        // to conform to existing UI needs or could be explicitly narrowed later.
+        // 🔴 Enforce correct permission for completion
+        if (!ctx.permissions?.includes('manage_completion')) {
+            throw new Error('Permission denied: manage_completion required')
+        }
 
         const { data, error } = await supabase
             .from('items')
@@ -1383,13 +1384,18 @@ export const db = {
             .eq('id', itemId)
             .eq('organization_id', ctx.organizationId)
             .select()
-            .single()
 
         if (error) {
-            console.error(error)
+            console.error("Update error:", error)
             throw new Error(error.message)
         }
 
-        return data
+        // 🔴 This is the key check for RLS
+        if (!data || data.length === 0) {
+            console.warn("No rows updated — likely RLS blocking or wrong conditions")
+            throw new Error("Update failed: no rows affected")
+        }
+
+        return data[0]
     }
 }
