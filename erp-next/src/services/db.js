@@ -819,50 +819,106 @@ export const db = {
     },
 
     async createTaskAndRate(productName, categoryName, taskName, bandAFee, bandBFee) {
+        const ctx = await getContext();
+        requirePermission(ctx, 'manage_rates');
 
-        const ctx = await getContext()
-        requirePermission(ctx, 'manage_rates')
+        const cleanProductName = String(productName).trim();
+        const cleanCategoryName = String(categoryName).trim();
+        const cleanTaskName = String(taskName).trim();
 
-        // product
-        const { data: product } = await supabase
+        const cleanBandAFee = Number(String(bandAFee).replace(/,/g, '').trim());
+        const cleanBandBFee = Number(String(bandBFee).replace(/,/g, '').trim());
+
+        if (!cleanProductName || !cleanCategoryName || !cleanTaskName) {
+            throw new Error('Product, Category, and Task names are required.');
+        }
+
+        if (Number.isNaN(cleanBandAFee) || Number.isNaN(cleanBandBFee)) {
+            throw new Error('Band A Fee and Band B Fee must be valid numbers.');
+        }
+
+        // 1. find or create product
+        let { data: product, error: productError } = await supabase
             .from('product_types')
             .select('*')
-            .eq('name', productName)
             .eq('organization_id', ctx.organizationId)
-            .single()
+            .ilike('name', cleanProductName)
+            .maybeSingle();
 
-        const productId = product?.id
+        if (productError) throw productError;
 
-        // category
-        const { data: category } = await supabase
+        if (!product) {
+            const { data: newProduct, error: newProductError } = await supabase
+                .from('product_types')
+                .insert({
+                    organization_id: ctx.organizationId,
+                    name: cleanProductName
+                })
+                .select()
+                .single();
+
+            if (newProductError) throw newProductError;
+            product = newProduct;
+        }
+
+        // 2. find or create category
+        let { data: category, error: categoryError } = await supabase
             .from('category_types')
             .select('*')
-            .eq('name', categoryName)
             .eq('organization_id', ctx.organizationId)
-            .single()
+            .ilike('name', cleanCategoryName)
+            .maybeSingle();
 
-        const categoryId = category?.id
+        if (categoryError) throw categoryError;
 
-        // create task type
-        const { data: taskType } = await supabase
+        if (!category) {
+            const { data: newCategory, error: newCategoryError } = await supabase
+                .from('category_types')
+                .insert({
+                    organization_id: ctx.organizationId,
+                    name: cleanCategoryName
+                })
+                .select()
+                .single();
+
+            if (newCategoryError) throw newCategoryError;
+            category = newCategory;
+        }
+
+        // 3. find or create task type
+        let { data: taskType, error: taskTypeError } = await supabase
             .from('task_types')
-            .insert({
-                organization_id: ctx.organizationId,
-                name: taskName
-            })
-            .select()
-            .single()
+            .select('*')
+            .eq('organization_id', ctx.organizationId)
+            .ilike('name', cleanTaskName)
+            .maybeSingle();
 
-        // create rate card
+        if (taskTypeError) throw taskTypeError;
+
+        if (!taskType) {
+            const { data: newTaskType, error: newTaskTypeError } = await supabase
+                .from('task_types')
+                .insert({
+                    organization_id: ctx.organizationId,
+                    name: cleanTaskName
+                })
+                .select()
+                .single();
+
+            if (newTaskTypeError) throw newTaskTypeError;
+            taskType = newTaskType;
+        }
+
+        // 4. upsert rate card
         const rateData = await this.upsertRateCard({
-            product_type_id: productId,
-            category_type_id: categoryId,
+            product_type_id: product.id,
+            category_type_id: category.id,
             task_type_id: taskType.id,
-            band_a_fee: parseFloat(bandAFee),
-            band_b_fee: parseFloat(bandBFee)
-        })
+            band_a_fee: cleanBandAFee,
+            band_b_fee: cleanBandBFee
+        });
 
-        return rateData
+        return rateData;
     },
 
     async updateRateCard(id, payload) {

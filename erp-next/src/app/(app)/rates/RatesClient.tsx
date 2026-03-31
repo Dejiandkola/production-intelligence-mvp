@@ -258,23 +258,54 @@ export default function ManageTaskTypes({ permissions }: { permissions: string[]
                                 alert("Master Data writes are read-only for your role.");
                                 return;
                             }
-                            let count = 0;
-                            setLoading(true);
-                            for (const row of data) {
-                                // Product, Category, Task Name, Band A Fee, Band B Fee
-                                const productName = row.Product;
-                                const categoryName = row.Category;
-                                const taskName = row['Task Name'];
-                                const bandAFee = row['Band A Fee'] || row['Base Fee'];
-                                const bandBFee = row['Band B Fee'] || bandAFee;
 
-                                if (productName && categoryName && taskName && bandAFee) {
-                                    await db.createTaskAndRate(productName, categoryName, taskName, bandAFee, bandBFee);
+                            let count = 0;
+                            let skipped = 0;
+                            setLoading(true);
+
+                            try {
+                                for (const row of data) {
+                                    const productName = row['Product Type']?.trim();
+                                    const categoryName = row['Category Type']?.trim();
+                                    const taskName = row['Task Type']?.trim();
+
+                                    const bandAFee = Number(
+                                        String(row['Band A Fee'] ?? row['Base Fee'] ?? '')
+                                            .replace(/,/g, '')
+                                            .trim()
+                                    );
+
+                                    const bandBFee = Number(
+                                        String(row['Band B Fee'] ?? row['Band A Fee'] ?? row['Base Fee'] ?? '')
+                                            .replace(/,/g, '')
+                                            .trim()
+                                    );
+
+                                    if (!productName || !categoryName || !taskName || Number.isNaN(bandAFee)) {
+                                        console.log('Skipped row:', row);
+                                        skipped++;
+                                        continue;
+                                    }
+
+                                    await db.createTaskAndRate(
+                                        productName,
+                                        categoryName,
+                                        taskName,
+                                        bandAFee,
+                                        Number.isNaN(bandBFee) ? bandAFee : bandBFee
+                                    );
+
                                     count++;
                                 }
+
+                                await loadData();
+                                alert(`Imported ${count} task rates. Skipped ${skipped}.`);
+                            } catch (error) {
+                                console.error('Rates import failed:', error);
+                                alert(error.message || 'Rates import failed.');
+                            } finally {
+                                setLoading(false);
                             }
-                            await loadData();
-                            alert(`Imported ${count} task rates.`);
                         }}
                     />
                     <Button onClick={() => handleOpenModal()} disabled={!canManageRates}>

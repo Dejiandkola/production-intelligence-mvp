@@ -62,7 +62,7 @@ export function Sidebar({ isOpen, onClose }) {
                             <img src="/logo.png" alt="Deji and Kola" className="w-full h-full object-contain" />
                         </div>
                         <div>
-                            <h1 className="font-serif text-lg font-medium leading-none">Deji and Kola</h1>
+                            <h1 className="font-serif text-lg font-medium leading-none">Deji&Kola</h1>
                         </div>
                     </div>
                     {/* Close Button (Mobile Only) */}

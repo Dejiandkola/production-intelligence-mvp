@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { Menu, LogOut } from 'lucide-react';
 import { db } from '@/services/db';
 import { useRouter } from 'next/navigation';
+import Image from "next/image";
 
 export function Header({ title, onMenuClick }) {
     const [user, setUser] = useState({ email: '', roleName: 'Loading...' });
