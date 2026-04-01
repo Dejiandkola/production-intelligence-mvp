@@ -759,6 +759,117 @@ export const db = {
         }
     },
 
+    async upsertTailorByName(tailorData) {
+        const ctx = await getContext();
+        requirePermission(ctx, 'manage_tailors');
+
+        const normalizeName = (value) =>
+            String(value || '')
+                .trim()
+                .replace(/\s+/g, ' ')
+                .toLowerCase();
+
+        const normalizeBand = (value) => {
+            const cleaned = String(value || '').trim().toLowerCase();
+            if (cleaned === 'a' || cleaned === 'band a') return 'A';
+            if (cleaned === 'b' || cleaned === 'band b') return 'B';
+            return null;
+        };
+
+        const rawName = String(tailorData.name || '').trim().replace(/\s+/g, ' ');
+        const normalizedName = normalizeName(rawName);
+        const band = normalizeBand(tailorData.band);
+        const department = String(tailorData.department || '').trim() || '-';
+
+        if (!rawName) {
+            throw new Error('Tailor name is required.');
+        }
+
+        if (!band) {
+            throw new Error(`Invalid band for tailor "${rawName}".`);
+        }
+
+        const { data: existingTailors, error: findError } = await supabase
+            .from('tailors')
+            .select('*')
+            .eq('organization_id', ctx.organizationId);
+
+        if (findError) {
+            console.error(findError);
+            throw new Error(findError.message);
+        }
+
+        const existing = (existingTailors || []).find(
+            (t) => normalizeName(t.name) === normalizedName
+        );
+
+        if (!existing) {
+            const { data, error } = await supabase
+                .from('tailors')
+                .insert({
+                    organization_id: ctx.organizationId,
+                    name: rawName,
+                    department,
+                    band,
+                    active: true
+                })
+                .select()
+                .single();
+
+            if (error) {
+                console.error(error);
+                throw new Error(error.message);
+            }
+
+            return { action: 'created', data };
+        }
+
+        const updates = {};
+        let hasChanges = false;
+
+        if ((existing.name || '').trim().replace(/\s+/g, ' ') !== rawName) {
+            updates.name = rawName;
+            hasChanges = true;
+        }
+
+        if ((existing.department || '-') !== department) {
+            updates.department = department;
+            hasChanges = true;
+        }
+
+        if ((existing.band || '').toUpperCase() !== band) {
+            updates.band = band;
+            hasChanges = true;
+        }
+
+        if (existing.active !== true) {
+            updates.active = true;
+            hasChanges = true;
+        }
+
+        if (!hasChanges) {
+            return { action: 'unchanged', data: existing };
+        }
+
+        const { data, error } = await supabase
+            .from('tailors')
+            .update({
+                ...updates,
+                organization_id: ctx.organizationId
+            })
+            .eq('id', existing.id)
+            .eq('organization_id', ctx.organizationId)
+            .select()
+            .single();
+
+        if (error) {
+            console.error(error);
+            throw new Error(error.message);
+        }
+
+        return { action: 'updated', data };
+    },
+
     // -------------------------
     // TASK TYPES + RATE CARD
     // -------------------------
@@ -1243,25 +1354,36 @@ export const db = {
     },
 
     async createWorkAssignment(payload) {
-        const ctx = await getContext()
-        requirePermission(ctx, 'manage_production')
+        const ctx = await getContext();
+        requirePermission(ctx, 'manage_qc');
 
-        const { data, error } = await supabase.rpc('update_work_assignment', {
-            p_assignment_id: id,
+        const { data, error } = await supabase.rpc('create_work_assignment', {
+            p_item_id: payload.item_id,
             p_category_type_id: payload.category_type_id,
             p_task_type_id: payload.task_type_id,
-            p_tailor_id: payload.tailor_id,
-        })
+            p_tailor_id: payload.tailor_id
+        });
 
         if (error) {
-            console.error(error)
-            throw new Error(error.message)
+            if (process.env.NODE_ENV !== 'production') {
+                console.error('createWorkAssignment error:', error);
+            }
+
+            const isDuplicate =
+                error.code === '23505' ||
+                error.message?.includes('duplicate key value') ||
+                error.message?.includes('work_assignments_org_item_cat_task_key');
+
+            if (isDuplicate) {
+                throw new Error('This item already has that task under the selected category. Edit the existing task instead.');
+            }
+
+            throw new Error(error.message || 'Failed to create work assignment.');
         }
 
-        // Update item status to IN_QC when a task is assigned
         await this.updateItemStatus(payload.item_id, 'IN_QC');
 
-        return data
+        return data;
     },
 
     async deleteWorkAssignment(id) {
@@ -1321,52 +1443,60 @@ export const db = {
     },
 
     async updateWorkAssignment(id, payload) {
-        const ctx = await getContext()
-        requirePermission(ctx, 'manage_production')
+        const ctx = await getContext();
+        requirePermission(ctx, 'manage_qc');
 
-        // 1. Fetch assignment and confirm it exists, same org
         const { data: assignment, error: fetchErr } = await supabase
             .from('work_assignments')
             .select('item_id, status')
             .eq('id', id)
             .eq('organization_id', ctx.organizationId)
-            .single()
+            .single();
 
         if (fetchErr) {
-            if (fetchErr.code === 'PGRST116') throw new Error("Work assignment not found.")
-            throw new Error(fetchErr.message)
+            if (fetchErr.code === 'PGRST116') throw new Error("Work assignment not found.");
+            throw new Error(fetchErr.message);
         }
 
-        // 2. Editing Rules
         if (assignment.status === 'QC_PASSED' || assignment.status === 'PAID' || assignment.status === 'REVERSED') {
-            throw new Error("Cannot edit this task because it has already progressed beyond assignment.")
+            throw new Error("Cannot edit this task because it has already progressed beyond assignment.");
         }
 
         if (assignment.status !== 'CREATED') {
-            throw new Error(`Cannot edit this task. Current status: ${assignment.status}`)
+            throw new Error(`Cannot edit this task. Current status: ${assignment.status}`);
         }
 
-        // 3. Extract ONLY permitted fields
         const allowedPayload = {
             p_assignment_id: id,
             p_category_type_id: payload.category_type_id,
             p_task_type_id: payload.task_type_id,
             p_tailor_id: payload.tailor_id
-        }
+        };
 
         if (!allowedPayload.p_category_type_id || !allowedPayload.p_task_type_id || !allowedPayload.p_tailor_id) {
-            throw new Error("Missing required editable fields: category, task, or tailor.")
+            throw new Error("Missing required editable fields: category, task, or tailor.");
         }
 
-        // 4. Update via RPC to reuse identical pricing snapshot logic
-        const { data, error } = await supabase.rpc('update_work_assignment', allowedPayload)
+        const { data, error } = await supabase.rpc('update_work_assignment', allowedPayload);
 
         if (error) {
-            console.error(error)
-            throw new Error(error.message)
+            if (process.env.NODE_ENV !== 'production') {
+                console.error('updateWorkAssignment error:', error);
+            }
+
+            const isDuplicate =
+                error.code === '23505' ||
+                error.message?.includes('duplicate key value') ||
+                error.message?.includes('work_assignments_org_item_cat_task_key');
+
+            if (isDuplicate) {
+                throw new Error('This item already has that task under the selected category.');
+            }
+
+            throw new Error(error.message || 'Failed to update work assignment.');
         }
 
-        return data
+        return data;
     },
 
     async getTasks() {

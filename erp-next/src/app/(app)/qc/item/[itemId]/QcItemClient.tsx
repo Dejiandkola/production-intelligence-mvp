@@ -69,8 +69,21 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
         .filter((v, i, a) => a.findIndex(t => t.id === v.id) === i);
 
     // 2. Available Task Types: Filter by Product Type AND Selected Category directly from rateCard
+    const activeCategoryId = editingTask ? editTaskData.category_type_id : newTask.category_type_id;
+
+    const usedTaskTypeIdsForSelectedCategory = tasks
+        .filter(t => t.category_type_id === activeCategoryId)
+        .map(t => t.task_type_id);
+
     const availableTaskTypes = rateCard
-        .filter(r => r.product_type_id === item?.product_type_id && r.category_type_id === (editingTask ? editTaskData.category_type_id : newTask.category_type_id))
+        .filter(r =>
+            r.product_type_id === item?.product_type_id &&
+            r.category_type_id === activeCategoryId &&
+            (
+                editingTask ||
+                !usedTaskTypeIdsForSelectedCategory.includes(r.task_type_id)
+            )
+        )
         .map(r => ({ id: r.task_type_id, name: r.name }));
 
     // --- Rate Calculation for Display ---
@@ -92,14 +105,25 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
 
 
     const handleCreateTask = async (e) => {
+        e.preventDefault();
+
         if (!canManageQc) {
-            e.preventDefault();
             alert("Not allowed");
             return;
         }
-        e.preventDefault();
+
+        if (!item?.id) {
+            alert("Invalid item.");
+            return;
+        }
+
         if (!selectedRate) {
             alert("Invalid Rate Configuration");
+            return;
+        }
+
+        if (!newTask?.category_type_id || !newTask?.task_type_id || !newTask?.tailor_id) {
+            alert("Please select category, task, and tailor.");
             return;
         }
 
@@ -110,10 +134,12 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                 task_type_id: newTask.task_type_id,
                 tailor_id: newTask.tailor_id
             });
+
             setShowAssignForm(false);
-            loadData(); // Refresh
+            await loadData();
         } catch (err) {
-            alert(err.message);
+            console.error('Create task failed:', err);
+            alert(err.message || 'Failed to assign task.');
         }
     };
 

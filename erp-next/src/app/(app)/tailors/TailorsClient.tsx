@@ -137,7 +137,84 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
                     <p className="text-sm text-maison-secondary">Manage atelier staff, departments, and pay bands</p>
                 </div>
                 <div className="flex gap-3">
-                    <CSVImporter onImport={handleImportCSV} />
+                    <CSVImporter onImport={async (data) => {
+                        if (!canManageTailors) {
+                            alert("Tailor writes are read-only for your role.");
+                            return;
+                        }
+
+                        let created = 0;
+                        let updated = 0;
+                        let unchanged = 0;
+                        let skipped = 0;
+                        const skippedReasons = [];
+
+                        setLoading(true);
+
+                        try {
+                            for (const row of data) {
+                                const name = String(row['Tailor Name'] ?? '').trim();
+                                const department = String(row['Department'] ?? '').trim();
+                                const bandRaw = String(row['Band'] ?? '').trim();
+
+                                const isCompletelyBlank = !name && !department && !bandRaw;
+                                if (isCompletelyBlank) {
+                                    continue;
+                                }
+
+                                if (!name) {
+                                    skipped++;
+                                    skippedReasons.push({ row, reason: 'Missing Tailor Name' });
+                                    continue;
+                                }
+
+                                const cleanedBand = bandRaw.toLowerCase();
+                                const validBand =
+                                    cleanedBand === 'a' || cleanedBand === 'band a'
+                                        ? 'A'
+                                        : cleanedBand === 'b' || cleanedBand === 'band b'
+                                            ? 'B'
+                                            : null;
+
+                                if (!validBand) {
+                                    skipped++;
+                                    skippedReasons.push({ row, reason: `Invalid Band: ${bandRaw}` });
+                                    continue;
+                                }
+
+                                try {
+                                    const result = await db.upsertTailorByName({
+                                        name,
+                                        department: department || '-',
+                                        band: validBand
+                                    });
+
+                                    if (result.action === 'created') created++;
+                                    else if (result.action === 'updated') updated++;
+                                    else unchanged++;
+                                } catch (rowError) {
+                                    skipped++;
+                                    skippedReasons.push({
+                                        row,
+                                        reason: rowError.message || 'Unknown import error'
+                                    });
+                                    console.error('Tailor row import failed:', row, rowError);
+                                }
+                            }
+
+                            await loadData();
+
+                            console.log('Tailor import skipped reasons:', skippedReasons);
+                            alert(
+                                `Tailor import complete.\nCreated: ${created}\nUpdated: ${updated}\nUnchanged: ${unchanged}\nSkipped: ${skipped}`
+                            );
+                        } catch (error) {
+                            console.error('Tailor import failed:', error);
+                            alert(error.message || 'Tailor import failed.');
+                        } finally {
+                            setLoading(false);
+                        }
+                    }} />
                     <Button onClick={() => handleOpenTailorModal()} disabled={!canManageTailors}>
                         <Plus size={16} className="mr-2" />
                         Add Tailor
