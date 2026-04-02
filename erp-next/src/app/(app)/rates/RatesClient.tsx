@@ -252,62 +252,96 @@ export default function ManageTaskTypes({ permissions }: { permissions: string[]
                     <p className="text-sm text-maison-secondary">Configure tasks and base fees per product/category</p>
                 </div>
                 <div className="flex gap-3">
-                    <CSVImporter
-                        onImport={async (data) => {
-                            if (!canManageRates) {
-                                alert("Master Data writes are read-only for your role.");
-                                return;
-                            }
-
-                            let count = 0;
-                            let skipped = 0;
-                            setLoading(true);
-
-                            try {
-                                for (const row of data) {
-                                    const productName = row['Product Type']?.trim();
-                                    const categoryName = row['Category Type']?.trim();
-                                    const taskName = row['Task Type']?.trim();
-
-                                    const bandAFee = Number(
-                                        String(row['Band A Fee'] ?? row['Base Fee'] ?? '')
-                                            .replace(/,/g, '')
-                                            .trim()
-                                    );
-
-                                    const bandBFee = Number(
-                                        String(row['Band B Fee'] ?? row['Band A Fee'] ?? row['Base Fee'] ?? '')
-                                            .replace(/,/g, '')
-                                            .trim()
-                                    );
-
-                                    if (!productName || !categoryName || !taskName || Number.isNaN(bandAFee)) {
-                                        console.log('Skipped row:', row);
-                                        skipped++;
-                                        continue;
-                                    }
-
-                                    await db.createTaskAndRate(
-                                        productName,
-                                        categoryName,
-                                        taskName,
-                                        bandAFee,
-                                        Number.isNaN(bandBFee) ? bandAFee : bandBFee
-                                    );
-
-                                    count++;
+                    {canManageRates && (
+                        <CSVImporter
+                            onImport={async (data) => {
+                                if (!canManageRates) {
+                                    alert("Master Data writes are read-only for your role.");
+                                    return;
                                 }
 
-                                await loadData();
-                                alert(`Imported ${count} task rates. Skipped ${skipped}.`);
-                            } catch (error) {
-                                console.error('Rates import failed:', error);
-                                alert(error.message || 'Rates import failed.');
-                            } finally {
-                                setLoading(false);
-                            }
-                        }}
-                    />
+                                let created = 0;
+                                let skipped = 0;
+                                const skippedRows = [];
+
+                                setLoading(true);
+
+                                try {
+                                    for (const row of data) {
+                                        try {
+                                            const productName = String(row['Product Type'] ?? '').trim();
+                                            const categoryName = String(row['Category Type'] ?? '').trim();
+                                            const taskName = String(row['Task Type'] ?? '').trim();
+
+                                            const bandAFee = Number(
+                                                String(row['Band A Fee'] ?? row['Base Fee'] ?? '')
+                                                    .replace(/,/g, '')
+                                                    .trim()
+                                            );
+
+                                            const bandBFee = Number(
+                                                String(row['Band B Fee'] ?? row['Band A Fee'] ?? row['Base Fee'] ?? '')
+                                                    .replace(/,/g, '')
+                                                    .trim()
+                                            );
+
+                                            const isCompletelyBlank =
+                                                !productName && !categoryName && !taskName &&
+                                                String(row['Band A Fee'] ?? row['Base Fee'] ?? '').trim() === '' &&
+                                                String(row['Band B Fee'] ?? '').trim() === '';
+
+                                            if (isCompletelyBlank) {
+                                                continue;
+                                            }
+
+                                            if (!productName || !categoryName || !taskName) {
+                                                skipped++;
+                                                skippedRows.push({ row, reason: 'Missing Product Type, Category Type, or Task Type' });
+                                                continue;
+                                            }
+
+                                            if (Number.isNaN(bandAFee)) {
+                                                skipped++;
+                                                skippedRows.push({ row, reason: 'Invalid Band A Fee' });
+                                                continue;
+                                            }
+
+                                            const finalBandBFee = Number.isNaN(bandBFee) ? bandAFee : bandBFee;
+
+                                            await db.createTaskAndRate(
+                                                productName,
+                                                categoryName,
+                                                taskName,
+                                                bandAFee,
+                                                finalBandBFee
+                                            );
+
+                                            created++;
+                                        } catch (rowError) {
+                                            skipped++;
+                                            skippedRows.push({
+                                                row,
+                                                reason: rowError.message || 'Row failed'
+                                            });
+                                            console.error('Rate row import failed:', row, rowError);
+                                        }
+                                    }
+
+                                    await loadData();
+
+                                    console.log('Rates import skipped rows:', skippedRows);
+                                    alert(
+                                        `Rates import complete.\nCreated/Updated: ${created}\nSkipped: ${skipped}`
+                                    );
+                                } catch (error) {
+                                    console.error('Rates import failed:', error);
+                                    alert(error.message || 'Rates import failed.');
+                                } finally {
+                                    setLoading(false);
+                                }
+                            }}
+                        />
+                    )}
                     <Button onClick={() => handleOpenModal()} disabled={!canManageRates}>
                         <Plus size={16} className="mr-2" />
                         Add Task Type

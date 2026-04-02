@@ -111,46 +111,84 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
                     <p className="text-sm text-maison-secondary">Track all physical items in the pipeline</p>
                 </div>
                 <div className="flex gap-3">
-                    <CSVImporter
-                        onImport={async (data) => {
-                            if (!canManageProduction) {
-                                alert("Master Data writes are read-only for your role.");
-                                return;
-                            }
-                            let count = 0;
-                            // Pre-fetch keys needed for matching
-                            const productTypes = await db.getProductTypes();
+                    {canManageProduction && (
+                        <CSVImporter
+                            onImport={async (data) => {
+                                if (!canManageProduction) {
+                                    alert("Master Data writes are read-only for your role.");
+                                    return;
+                                }
 
-                            setLoading(true);
-                            for (const row of data) {
-                                // Ticket ID, Customer, Product Type, Quantity, Notes
-                                const ticket_id = row['Ticket ID'];
-                                const customer_name = row.Customer;
-                                const productTypeName = row['Product Type'];
-                                const quantity = parseInt(row.Quantity) || 1;
-                                const notes = row.Notes || '';
+                                let count = 0;
+                                let skipped = 0;
+                                const skippedRows = [];
 
-                                if (ticket_id && customer_name && productTypeName) {
-                                    let pt = productTypes.find(p => p.name.toLowerCase() === productTypeName.toLowerCase());
-                                    if (!pt) {
-                                        pt = await db.createProductType(productTypeName);
+                                setLoading(true);
+
+                                try {
+                                    // Pre-fetch product types once
+                                    const productTypes = await db.getProductTypes();
+
+                                    for (const row of data) {
+                                        try {
+                                            const ticket_id = row['Ticket ID'];
+                                            const customer_name = row.Customer;
+                                            const productTypeName = row['Product Type'];
+                                            const quantity = parseInt(row.Quantity) || 1;
+                                            const notes = row.Notes || '';
+
+                                            // Skip invalid rows
+                                            if (!ticket_id || !customer_name || !productTypeName) {
+                                                skipped++;
+                                                skippedRows.push({ row, reason: 'Missing required fields' });
+                                                continue;
+                                            }
+
+                                            let pt = productTypes.find(
+                                                p => p.name.toLowerCase() === productTypeName.toLowerCase()
+                                            );
+
+                                            if (!pt) {
+                                                pt = await db.createProductType(productTypeName);
+                                            }
+
+                                            await db.createItem({
+                                                ticket_id,
+                                                customer_name,
+                                                product_type_id: pt.id,
+                                                quantity,
+                                                notes,
+                                                created_by_role: 'production'
+                                            });
+
+                                            count++;
+                                        } catch (rowError) {
+                                            skipped++;
+                                            skippedRows.push({
+                                                row,
+                                                reason: rowError.message || 'Row failed'
+                                            });
+
+                                            console.error('Row failed:', row, rowError);
+                                        }
                                     }
 
-                                    await db.createItem({
-                                        ticket_id,
-                                        customer_name,
-                                        product_type_id: pt.id,
-                                        quantity,
-                                        notes,
-                                        created_by_role: 'production' // default
-                                    });
-                                    count++;
+                                    await loadItems();
+
+                                    console.log('Skipped rows:', skippedRows);
+
+                                    alert(
+                                        `Import complete.\nCreated: ${count}\nSkipped: ${skipped}`
+                                    );
+                                } catch (error) {
+                                    console.error('Import failed:', error);
+                                    alert(error.message || 'Import failed.');
+                                } finally {
+                                    setLoading(false);
                                 }
-                            }
-                            await loadItems();
-                            alert(`Imported ${count} item batches.`);
-                        }}
-                    />
+                            }}
+                        />
+                    )}
                     <Button onClick={() => setIsCreateModalOpen(true)} disabled={!canManageProduction}>
                         <Plus size={16} className="mr-2" />
                         Create Item
