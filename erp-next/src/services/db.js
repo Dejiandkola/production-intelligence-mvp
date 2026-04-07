@@ -1388,7 +1388,9 @@ export const db = {
 
     async deleteWorkAssignment(id) {
         const ctx = await getContext()
-        requirePermission(ctx, 'manage_production')
+    if (!ctx.permissions.includes('manage_production') && !ctx.permissions.includes('manage_qc')) {
+        throw new PermissionDeniedError('Requires manage_production or manage_qc permission')
+    }
 
         // 1. Fetch assignment and confirm it exists, same org, status = 'CREATED'
         const { data: assignment, error: fetchErr } = await supabase
@@ -1443,8 +1445,10 @@ export const db = {
     },
 
     async updateWorkAssignment(id, payload) {
-        const ctx = await getContext();
-        requirePermission(ctx, 'manage_qc');
+        const ctx = await getContext()
+    if (!ctx.permissions.includes('manage_production') && !ctx.permissions.includes('manage_qc')) {
+        throw new PermissionDeniedError('Requires manage_production or manage_qc permission')
+    }
 
         const { data: assignment, error: fetchErr } = await supabase
             .from('work_assignments')
