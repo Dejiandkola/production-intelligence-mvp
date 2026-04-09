@@ -1561,12 +1561,10 @@ export const db = {
     },
 
     async updateItemStatus(itemId, status) {
-        const ctx = await getContext()
-
-        // 🔴 Enforce correct permission for completion
-        if (!ctx.permissions?.includes('manage_completion')) {
-            throw new Error('Permission denied: manage_completion required')
-        }
+    const ctx = await getContext()
+    if (!ctx.permissions?.includes('manage_completion') && !ctx.permissions?.includes('manage_qc')) {
+        throw new Error('Permission denied: manage_completion or manage_qc required')
+    }
 
         const { data, error } = await supabase
             .from('items')
