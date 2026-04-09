@@ -44,6 +44,9 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
             db.getTailors()
         ]);
 
+        console.log('first item:', data[0]);
+setItems(data.filter(i => i.status !== 'CANCELLED'));
+        
         setItems(data.filter(i => i.status !== 'CANCELLED'));
         setRateCard(rc);
         setTailors(t);
