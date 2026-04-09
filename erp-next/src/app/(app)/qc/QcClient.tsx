@@ -251,7 +251,7 @@ setItems(data.filter(i => i.status !== 'CANCELLED'));
                                 }}
                                 className="cursor-pointer hover:bg-gray-50 transition-colors"
                             >
-                                <TableCell className="font-medium font-mono text-xs">{item.ticket_item_key}</TableCell>
+                                <TableCell className="font-medium font-mono text-xs">{item.item_key}</TableCell>
                                 <TableCell className="font-medium">{item.customer_name}</TableCell>
                                 <TableCell>{item.product_type_name}</TableCell>
                                 <TableCell>
