@@ -234,7 +234,7 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
             </Card>
 
             <Card padding="p-0">
-                <Table headers={['Ticket ID', 'Customer Name', 'Product Type', 'Status', 'Assigned Date']}>
+                <Table headers={['Item Key', 'Customer Name', 'Product Type', 'Status', 'Assigned Date']}>
                     {filteredItems.map((item) => {
                         const assignedCategories = item.work_assignments?.map((wa: any) => wa.category_types?.name).filter(Boolean) || [];
                         const uniqueCategories = [...new Set(assignedCategories)];
@@ -248,7 +248,7 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
                                 }}
                                 className="cursor-pointer hover:bg-gray-50 transition-colors"
                             >
-                                <TableCell className="font-medium font-mono text-xs">{item.ticket_number}</TableCell>
+                                <TableCell className="font-medium font-mono text-xs">{item.ticket_item_key}</TableCell>
                                 <TableCell className="font-medium">{item.customer_name}</TableCell>
                                 <TableCell>{item.product_type_name}</TableCell>
                                 <TableCell>
