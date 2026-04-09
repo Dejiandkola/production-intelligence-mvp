@@ -7,12 +7,12 @@ import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
 import { Table, TableRow, TableCell, Badge } from '@/components/UI/Table';
 import { CSVImporter } from '@/components/Shared/CSVImporter';
-import { Plus, Trash2, Search, FilterX, Clock, CheckCircle2, ChevronDown, ChevronRight } from 'lucide-react';
+import { Plus, Trash2, Edit2, Search, FilterX, Clock, CheckCircle2, ChevronDown, ChevronRight } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { format, startOfDay, endOfDay } from 'date-fns';
 import { CreateItemModal } from '@/components/Production/CreateItemModal';
 
-export default function ItemList({ canManageProduction }: { canManageProduction: boolean }) {
+export default function ItemList({ canManageProduction, permissions = [] }: { canManageProduction: boolean, permissions?: string[] }) {
     const router = useRouter();
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [items, setItems] = useState([]);
@@ -49,7 +49,36 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
         }
     };
 
-    const handleDeleteItem = async (id) => {
+    const [editingTicket, setEditingTicket] = useState(null);
+const [editCustomerName, setEditCustomerName] = useState('');
+
+const handleEditTicket = (group) => {
+    setEditingTicket(group.ticket_id);
+    setEditCustomerName(group.customer_name);
+};
+
+const handleSaveTicket = async (ticketId) => {
+    if (!editCustomerName.trim()) return;
+    try {
+        await db.updateTicket(ticketId, { customer_name: editCustomerName.trim() });
+        await loadItems();
+        setEditingTicket(null);
+    } catch (err) {
+        alert(err.message);
+    }
+};
+
+const handleDeleteTicket = async (group) => {
+    if (!window.confirm(`Are you sure you want to permanently delete ticket ${group.ticket_id} and all ${group.items.length} item(s) under it? This cannot be undone.`)) return;
+    try {
+        await db.deleteTicket(group.realTicketId);
+        await loadItems();
+    } catch (err) {
+        alert(err.message);
+    }
+};
+
+const handleDeleteItem = async (id) => {
         if (!canManageProduction) {
             alert("Master Data writes are read-only for your role.");
             return;
@@ -87,7 +116,8 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
         const tId = item.ticket_number || 'Unassigned';
         if (!acc[tId]) {
             acc[tId] = {
-                ticket_id: tId, // This is actually the ticket_number now for the UI group
+                ticket_id: tId,
+                realTicketId: item.ticket_id,
                 customer_name: item.customer_name || 'Unknown Client',
                 items: []
             };
@@ -300,18 +330,34 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
                         <Card key={group.ticket_id} padding="p-0" className="overflow-hidden border border-gray-200">
                             {/* Accordion Header */}
                             <div
-                                onClick={() => toggleGroup(group.ticket_id)}
-                                className={`flex items-center justify-between p-3 cursor-pointer hover:bg-gray-50 transition-colors ${isExpanded ? 'bg-gray-50 border-b border-gray-200' : ''}`}
+                                className={`flex items-center justify-between p-3 transition-colors ${isExpanded ? 'bg-gray-50 border-b border-gray-200' : 'hover:bg-gray-50'}`}
                             >
                                 <div className="flex items-center gap-3 w-full">
-                                    <div className="text-maison-primary min-w-5">
+                                    <div
+                                        className="text-maison-primary min-w-5 cursor-pointer"
+                                        onClick={() => toggleGroup(group.ticket_id)}
+                                    >
                                         {isExpanded ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
                                     </div>
-                                    <div className="flex-1 flex items-center justify-between">
+                                    <div
+                                        className="flex-1 flex items-center justify-between cursor-pointer"
+                                        onClick={() => toggleGroup(group.ticket_id)}
+                                    >
                                         <div className="flex items-center gap-4">
-                                            <h3 className="font-serif font-medium text-lg text-maison-primary">
-                                                {group.customer_name}
-                                            </h3>
+                                            {editingTicket === group.ticket_id ? (
+                                                <input
+                                                    type="text"
+                                                    value={editCustomerName}
+                                                    onChange={e => setEditCustomerName(e.target.value)}
+                                                    onClick={e => e.stopPropagation()}
+                                                    className="px-2 py-1 text-sm border border-maison-primary rounded-md focus:outline-none"
+                                                    autoFocus
+                                                />
+                                            ) : (
+                                                <h3 className="font-serif font-medium text-lg text-maison-primary">
+                                                    {group.customer_name}
+                                                </h3>
+                                            )}
                                             <span className="text-gray-300">|</span>
                                             <span className="font-mono text-sm font-medium text-gray-500">
                                                 {group.ticket_id}
@@ -325,6 +371,47 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
                                                 {group.items.filter(i => i.status === 'COMPLETED').length} / {group.items.length} Completed
                                             </Badge>
                                         </div>
+                                    </div>
+
+                                    {/* Ticket actions */}
+                                    <div className="flex items-center gap-1 ml-2" onClick={e => e.stopPropagation()}>
+                                        {editingTicket === group.ticket_id ? (
+                                            <>
+                                                <button
+                                                    onClick={() => handleSaveTicket(group.realTicketId)}
+                                                    className="px-2 py-1 text-xs bg-maison-primary text-white rounded-md hover:opacity-90"
+                                                >
+                                                    Save
+                                                </button>
+                                                <button
+                                                    onClick={() => setEditingTicket(null)}
+                                                    className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700 border border-gray-200 rounded-md"
+                                                >
+                                                    Cancel
+                                                </button>
+                                            </>
+                                        ) : (
+                                            <>
+                                                {canManageProduction && (
+                                                    <button
+                                                        onClick={() => handleEditTicket(group)}
+                                                        className="p-1.5 text-gray-400 hover:text-maison-primary hover:bg-gray-100 rounded transition-colors"
+                                                        title="Edit Customer Name"
+                                                    >
+                                                        <Edit2 size={15} />
+                                                    </button>
+                                                )}
+                                                {permissions?.includes('admin') && (
+                                                    <button
+                                                        onClick={() => handleDeleteTicket(group)}
+                                                        className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                                                        title="Delete Ticket"
+                                                    >
+                                                        <Trash2 size={15} />
+                                                    </button>
+                                                )}
+                                            </>
+                                        )}
                                     </div>
                                 </div>
                             </div>
