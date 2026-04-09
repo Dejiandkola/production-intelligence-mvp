@@ -41,6 +41,57 @@ export default function ManageTaskTypes({ permissions }: { permissions: string[]
         active: true
     });
 
+    // Search & sort state
+    const [search, setSearch] = useState('');
+    const [sortCol, setSortCol] = useState(null);
+    const [sortDir, setSortDir] = useState('asc');
+
+    const handleSort = (col) => {
+        if (sortCol === col) {
+            setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+        } else {
+            setSortCol(col);
+            setSortDir('asc');
+        }
+    };
+
+    const sortIcon = (col) => {
+        if (sortCol !== col) return ' ↕';
+        return sortDir === 'asc' ? ' ↑' : ' ↓';
+    };
+
+    const displayedTasks = React.useMemo(() => {
+        let result = tasks;
+
+        if (search.trim()) {
+            const q = search.toLowerCase();
+            result = result.filter(item =>
+                item.product_name?.toLowerCase().includes(q) ||
+                item.category_name?.toLowerCase().includes(q) ||
+                item.name?.toLowerCase().includes(q)
+            );
+        }
+
+        if (sortCol) {
+            result = [...result].sort((a, b) => {
+                let aVal, bVal;
+                if (sortCol === 'band_a_fee' || sortCol === 'band_b_fee') {
+                    aVal = parseFloat(a[sortCol] || 0);
+                    bVal = parseFloat(b[sortCol] || 0);
+                    return sortDir === 'asc' ? aVal - bVal : bVal - aVal;
+                } else {
+                    aVal = (a[sortCol] || '').toLowerCase();
+                    bVal = (b[sortCol] || '').toLowerCase();
+                    if (aVal < bVal) return sortDir === 'asc' ? -1 : 1;
+                    if (aVal > bVal) return sortDir === 'asc' ? 1 : -1;
+                    return 0;
+                }
+            });
+        }
+
+        return result;
+    }, [tasks, search, sortCol, sortDir]);
+
     useEffect(() => {
         loadData();
     }, []);
@@ -349,9 +400,37 @@ export default function ManageTaskTypes({ permissions }: { permissions: string[]
                 </div>
             </div>
 
+            <div className="flex gap-3 items-center">
+                <div className="relative flex-1 max-w-sm">
+                    <input
+                        type="text"
+                        placeholder="Search by product, category or task..."
+                        value={search}
+                        onChange={e => setSearch(e.target.value)}
+                        className="w-full pl-3 pr-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-maison-primary"
+                    />
+                </div>
+                {search && (
+                    <button
+                        onClick={() => setSearch('')}
+                        className="text-xs text-gray-400 hover:text-gray-600"
+                    >
+                        Clear
+                    </button>
+                )}
+                <span className="text-xs text-gray-400 ml-auto">{displayedTasks.length} result{displayedTasks.length !== 1 ? 's' : ''}</span>
+            </div>
+
             <Card padding="p-0">
-                <Table headers={['Product', 'Category', 'Task Name', 'Band A Fee', 'Band B Fee', 'Status', 'Actions']}>
-                    {tasks.map((item) => (
+                <Table headers={[
+                    <span onClick={() => handleSort('product_name')} className="cursor-pointer select-none">Product{sortIcon('product_name')}</span>,
+                    <span onClick={() => handleSort('category_name')} className="cursor-pointer select-none">Category{sortIcon('category_name')}</span>,
+                    <span onClick={() => handleSort('name')} className="cursor-pointer select-none">Task Name{sortIcon('name')}</span>,
+                    <span onClick={() => handleSort('band_a_fee')} className="cursor-pointer select-none">Band A Fee{sortIcon('band_a_fee')}</span>,
+                    <span onClick={() => handleSort('band_b_fee')} className="cursor-pointer select-none">Band B Fee{sortIcon('band_b_fee')}</span>,
+                    'Status', 'Actions'
+                ]}>
+                    {displayedTasks.map((item) => (
                         <TableRow key={item.id}>
                             <TableCell>{item.product_name}</TableCell>
                             <TableCell>{item.category_name}</TableCell>
