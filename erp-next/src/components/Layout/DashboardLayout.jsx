@@ -3,12 +3,14 @@
 import React, { useState } from 'react';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
+import { OfflineBanner } from '@/components/UI/OfflineBanner';
 
 export function DashboardLayout({ children }) {
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
     return (
         <div className="flex min-h-screen bg-maison-bg font-sans text-maison-primary">
+            <OfflineBanner />
             <Sidebar
                 isOpen={isSidebarOpen}
                 onClose={() => setIsSidebarOpen(false)}
