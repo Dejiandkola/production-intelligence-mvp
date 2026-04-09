@@ -19,6 +19,7 @@ export default function PendingVerification() {
     const [searchTicket, setSearchTicket] = useState('');
     const [searchTailor, setSearchTailor] = useState('');
     const [searchTask, setSearchTask] = useState('');
+    const [searchCategory, setSearchCategory] = useState('');
     const [minAmount, setMinAmount] = useState('');
     const [maxAmount, setMaxAmount] = useState('');
     const [dateFrom, setDateFrom] = useState('');
@@ -40,6 +41,7 @@ export default function PendingVerification() {
         setSearchTicket('');
         setSearchTailor('');
         setSearchTask('');
+        setSearchCategory('');
         setMinAmount('');
         setMaxAmount('');
         setDateFrom('');
@@ -47,12 +49,18 @@ export default function PendingVerification() {
     };
 
     const hasActiveSearch =
-        searchCustomer || searchTicket || searchTailor || searchTask ||
+        searchCustomer || searchTicket || searchTailor || searchTask || searchCategory ||
         minAmount || maxAmount || dateFrom || dateTo;
 
     // Derive unique task type names for the task dropdown
     const taskOptions = useMemo(() => {
         const names = [...new Set(tasks.map(t => t.task_type_name).filter(Boolean))].sort();
+        return names;
+    }, [tasks]);
+
+    // Derive unique category names for the category dropdown
+    const categoryOptions = useMemo(() => {
+        const names = [...new Set(tasks.map(t => t.category_name).filter(Boolean))].sort();
         return names;
     }, [tasks]);
 
@@ -75,6 +83,9 @@ export default function PendingVerification() {
             // Task type (exact match from dropdown)
             if (searchTask && task.task_type_name !== searchTask) return false;
 
+            // Category (exact match from dropdown)
+            if (searchCategory && task.category_name !== searchCategory) return false;
+
             // Amount range
             const amount = parseFloat(task.pay_amount || 0);
             if (minAmount !== '' && amount < parseFloat(minAmount)) return false;
@@ -93,7 +104,7 @@ export default function PendingVerification() {
 
             return true;
         });
-    }, [tasks, filter, searchCustomer, searchTicket, searchTailor, searchTask, minAmount, maxAmount, dateFrom, dateTo]);
+    }, [tasks, filter, searchCustomer, searchTicket, searchTailor, searchTask, searchCategory, minAmount, maxAmount, dateFrom, dateTo]);
 
     const handleApprove = async (taskId) => {
         if (!window.confirm("Confirm payment approval for this task?")) return;
@@ -138,7 +149,7 @@ export default function PendingVerification() {
             <Card padding="p-4">
                 <div className="space-y-3">
                     {/* Row 1: text searches */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                         <div className="relative">
                             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                             <input
@@ -179,6 +190,17 @@ export default function PendingVerification() {
                         >
                             <option value="">All tasks</option>
                             {taskOptions.map(name => (
+                                <option key={name} value={name}>{name}</option>
+                            ))}
+                        </select>
+
+                        <select
+                            value={searchCategory}
+                            onChange={e => setSearchCategory(e.target.value)}
+                            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-maison-primary text-gray-700"
+                        >
+                            <option value="">All categories</option>
+                            {categoryOptions.map(name => (
                                 <option key={name} value={name}>{name}</option>
                             ))}
                         </select>
