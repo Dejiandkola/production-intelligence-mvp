@@ -1247,8 +1247,6 @@ async updateTicket(id, { customer_name }) {
         }
         return true
     },
-
-    async deleteItem(itemId) {
     
     async deleteItem(itemId) {
         const ctx = await getContext()
