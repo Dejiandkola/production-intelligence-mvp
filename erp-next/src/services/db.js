@@ -1210,6 +1210,46 @@ export const db = {
         }))
     },
 
+async updateTicket(id, { customer_name }) {
+        const ctx = await getContext()
+        requirePermission(ctx, 'manage_production')
+
+        const { data, error } = await supabase
+            .from('tickets')
+            .update({ customer_name })
+            .eq('id', id)
+            .eq('organization_id', ctx.organizationId)
+            .select()
+            .single()
+
+        if (error) {
+            console.error(error)
+            throw new Error(error.message)
+        }
+        return data
+    },
+
+    async deleteTicket(id) {
+        const ctx = await getContext()
+        if (!ctx.permissions.includes('admin')) {
+            throw new PermissionDeniedError('Requires admin permission')
+        }
+
+        const { error } = await supabase
+            .from('tickets')
+            .delete()
+            .eq('id', id)
+            .eq('organization_id', ctx.organizationId)
+
+        if (error) {
+            console.error(error)
+            throw new Error(error.message)
+        }
+        return true
+    },
+
+    async deleteItem(itemId) {
+    
     async deleteItem(itemId) {
         const ctx = await getContext()
         requirePermission(ctx, 'manage_production')
