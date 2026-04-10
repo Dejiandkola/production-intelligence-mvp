@@ -39,17 +39,22 @@ export default function Dashboard() {
     }, [dateRange, authorized]);
 
     const checkAccess = async () => {
-        try {
-            const permissions = await db.getMyPermissions();
-            if (!permissions.includes('admin')) {
-                router.replace('/unauthorized');
-            } else {
-                setAuthorized(true);
-            }
-        } catch {
-            router.replace('/unauthorized');
+    try {
+        const permissions = await db.getMyPermissions();
+        if (!permissions.includes('admin')) {
+            // Redirect to the right page based on their role
+            if (permissions.includes('manage_qc')) router.replace('/qc');
+            else if (permissions.includes('manage_production')) router.replace('/production');
+            else if (permissions.includes('manage_completion')) router.replace('/completion');
+            else if (permissions.includes('manage_payments')) router.replace('/accounts');
+            else router.replace('/unauthorized');
+        } else {
+            setAuthorized(true);
         }
-    };
+    } catch {
+        router.replace('/unauthorized');
+    }
+};
 
     const loadStats = async () => {
         setLoading(true);
