@@ -31,8 +31,25 @@ export default function Dashboard() {
     });
 
     useEffect(() => {
-        loadStats();
-    }, [dateRange]);
+        checkAccess();
+    }, []);
+
+    useEffect(() => {
+        if (authorized) loadStats();
+    }, [dateRange, authorized]);
+
+    const checkAccess = async () => {
+        try {
+            const permissions = await db.getMyPermissions();
+            if (!permissions.includes('admin')) {
+                router.replace('/unauthorized');
+            } else {
+                setAuthorized(true);
+            }
+        } catch {
+            router.replace('/unauthorized');
+        }
+    };
 
     const loadStats = async () => {
         setLoading(true);
@@ -102,6 +119,7 @@ export default function Dashboard() {
         setLoading(false);
     };
 
+     if (!authorized) return null;
     return (
         <div className="space-y-6">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
