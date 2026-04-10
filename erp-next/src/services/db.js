@@ -186,6 +186,11 @@ export const db = {
         }
     },
 
+    async getMyPermissions() {
+        const ctx = await getContext()
+        return ctx.permissions
+    },
+
     // -------------------------
     // MASTER DATA READS
     // -------------------------
