@@ -1,7 +1,20 @@
+"use client";
+
 import React from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 
 export default function UnauthorizedPage() {
+    const searchParams = useSearchParams()
+    const reason = searchParams.get('reason')
+
+    const getMessage = () => {
+        if (reason === 'no_access') {
+            return "You do not have permission to access this page. You have been redirected."
+        }
+        return "Your account is not configured with an active role or organization. Please contact your system administrator to get access."
+    }
+
     return (
         <div className="flex flex-col items-center justify-center min-h-screen bg-[#0E0E0E] text-white p-4">
             <div className="max-w-md w-full text-center space-y-6">
@@ -10,9 +23,16 @@ export default function UnauthorizedPage() {
                         <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                     </svg>
                 </div>
+
+                {reason === 'no_access' && (
+                    <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3 text-red-400 text-sm font-medium">
+                        ⚠ Access Denied — You do not have permission to view that page.
+                    </div>
+                )}
+
                 <h1 className="text-3xl font-bold tracking-tight text-neutral-100">Access Denied</h1>
                 <p className="text-base text-neutral-400">
-                    Your account is not configured with an active role or organization. Please contact your system administrator to get access.
+                    {getMessage()}
                 </p>
                 <div className="pt-4">
                     <Link
