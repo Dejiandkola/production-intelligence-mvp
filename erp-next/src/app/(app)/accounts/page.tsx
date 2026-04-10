@@ -13,6 +13,7 @@ import { useRouter } from 'next/navigation';
 export default function PendingVerification() {
     const router = useRouter();
     const [authorized, setAuthorized] = useState(false);
+    const [accessDenied, setAccessDenied] = useState(false);
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState('pending'); // all, pending, approved, rejected
@@ -36,10 +37,14 @@ const checkAccess = async () => {
     try {
         const permissions = await db.getMyPermissions();
         if (!permissions.includes('admin')) {
-            if (permissions.includes('manage_qc')) router.replace('/qc');
-            else if (permissions.includes('manage_production')) router.replace('/production');
-            else if (permissions.includes('manage_completion')) router.replace('/completion');
-            else router.replace('/unauthorized?reason=no_access');
+            setAccessDenied(true);
+            setTimeout(() => {
+                if (permissions.includes('manage_qc')) router.replace('/qc');
+                else if (permissions.includes('manage_production')) router.replace('/production');
+                else if (permissions.includes('manage_completion')) router.replace('/completion');
+                else if (permissions.includes('manage_payments')) router.replace('/accounts');
+                else router.replace('/unauthorized?reason=no_access');
+            }, 2500);
         } else {
             setAuthorized(true);
         }
@@ -142,7 +147,17 @@ useEffect(() => {
         loadTasks();
     };
 
-    if (!authorized) return null;
+    if (accessDenied) return (
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50">
+        <div className="bg-red-50 border border-red-200 rounded-xl px-6 py-5 max-w-sm w-full text-center shadow-sm">
+            <div className="text-red-500 text-3xl mb-3">⚠</div>
+            <h2 className="text-red-700 font-semibold text-lg mb-1">Access Denied</h2>
+            <p className="text-red-500 text-sm">You do not have permission to view this page. Redirecting you now...</p>
+        </div>
+    </div>
+);
+
+if (!authorized) return null;
     return (
         <div className="space-y-6">
             {/* Header + status tabs */}
