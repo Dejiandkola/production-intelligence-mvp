@@ -8,8 +8,11 @@ import { Button } from '@/components/UI/Button';
 import { Table, TableRow, TableCell, Badge } from '@/components/UI/Table';
 import { Check, XSquare, Search, X } from 'lucide-react';
 import { format } from 'date-fns';
+import { useRouter } from 'next/navigation';
 
 export default function PendingVerification() {
+    const router = useRouter();
+    const [authorized, setAuthorized] = useState(false);
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState('pending'); // all, pending, approved, rejected
@@ -26,8 +29,28 @@ export default function PendingVerification() {
     const [dateTo, setDateTo] = useState('');
 
     useEffect(() => {
-        loadTasks();
-    }, []);
+    checkAccess();
+}, []);
+
+const checkAccess = async () => {
+    try {
+        const permissions = await db.getMyPermissions();
+        if (!permissions.includes('admin')) {
+            if (permissions.includes('manage_qc')) router.replace('/qc');
+            else if (permissions.includes('manage_production')) router.replace('/production');
+            else if (permissions.includes('manage_completion')) router.replace('/completion');
+            else router.replace('/unauthorized');
+        } else {
+            setAuthorized(true);
+        }
+    } catch {
+        router.replace('/unauthorized');
+    }
+};
+
+useEffect(() => {
+    if (authorized) loadTasks();
+}, [authorized]);
 
     const loadTasks = async () => {
         setLoading(true);
@@ -119,6 +142,7 @@ export default function PendingVerification() {
         loadTasks();
     };
 
+    if (!authorized) return null;
     return (
         <div className="space-y-6">
             {/* Header + status tabs */}
