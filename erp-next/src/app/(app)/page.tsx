@@ -47,12 +47,12 @@ export default function Dashboard() {
             else if (permissions.includes('manage_production')) router.replace('/production');
             else if (permissions.includes('manage_completion')) router.replace('/completion');
             else if (permissions.includes('manage_payments')) router.replace('/accounts');
-            else router.replace('/unauthorized');
+            else router.replace('/unauthorized?reason=no_access');
         } else {
             setAuthorized(true);
         }
     } catch {
-        router.replace('/unauthorized');
+        router.replace('/unauthorized?reason=no_access');
     }
 };
 
