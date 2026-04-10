@@ -13,6 +13,7 @@ import { startOfWeek, endOfWeek, parseISO, isWithinInterval } from 'date-fns';
 export default function Dashboard() {
     const router = useRouter();
     const [loading, setLoading] = useState(true);
+    const [authorized, setAuthorized] = useState(false);
     const [stats, setStats] = useState({
         activeItems: 0,
         totalRevenue: 0,
