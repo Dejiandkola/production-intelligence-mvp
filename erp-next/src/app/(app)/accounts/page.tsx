@@ -39,12 +39,12 @@ const checkAccess = async () => {
             if (permissions.includes('manage_qc')) router.replace('/qc');
             else if (permissions.includes('manage_production')) router.replace('/production');
             else if (permissions.includes('manage_completion')) router.replace('/completion');
-            else router.replace('/unauthorized');
+            else router.replace('/unauthorized?reason=no_access');
         } else {
             setAuthorized(true);
         }
     } catch {
-        router.replace('/unauthorized');
+        router.replace('/unauthorized?reason=no_access');
     }
 };
 
