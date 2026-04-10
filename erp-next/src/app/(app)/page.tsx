@@ -14,6 +14,7 @@ export default function Dashboard() {
     const router = useRouter();
     const [loading, setLoading] = useState(true);
     const [authorized, setAuthorized] = useState(false);
+    const [accessDenied, setAccessDenied] = useState(false);
     const [stats, setStats] = useState({
         activeItems: 0,
         totalRevenue: 0,
@@ -38,16 +39,18 @@ export default function Dashboard() {
         if (authorized) loadStats();
     }, [dateRange, authorized]);
 
-    const checkAccess = async () => {
+   const checkAccess = async () => {
     try {
         const permissions = await db.getMyPermissions();
         if (!permissions.includes('admin')) {
-            // Redirect to the right page based on their role
-            if (permissions.includes('manage_qc')) router.replace('/qc');
-            else if (permissions.includes('manage_production')) router.replace('/production');
-            else if (permissions.includes('manage_completion')) router.replace('/completion');
-            else if (permissions.includes('manage_payments')) router.replace('/accounts');
-            else router.replace('/unauthorized?reason=no_access');
+            setAccessDenied(true);
+            setTimeout(() => {
+                if (permissions.includes('manage_qc')) router.replace('/qc');
+                else if (permissions.includes('manage_production')) router.replace('/production');
+                else if (permissions.includes('manage_completion')) router.replace('/completion');
+                else if (permissions.includes('manage_payments')) router.replace('/accounts');
+                else router.replace('/unauthorized?reason=no_access');
+            }, 2500);
         } else {
             setAuthorized(true);
         }
@@ -124,7 +127,17 @@ export default function Dashboard() {
         setLoading(false);
     };
 
-     if (!authorized) return null;
+     if (accessDenied) return (
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50">
+        <div className="bg-red-50 border border-red-200 rounded-xl px-6 py-5 max-w-sm w-full text-center shadow-sm">
+            <div className="text-red-500 text-3xl mb-3">⚠</div>
+            <h2 className="text-red-700 font-semibold text-lg mb-1">Access Denied</h2>
+            <p className="text-red-500 text-sm">You do not have permission to view this page. Redirecting you now...</p>
+        </div>
+    </div>
+);
+
+if (!authorized) return null;
     return (
         <div className="space-y-6">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
