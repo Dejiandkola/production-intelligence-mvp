@@ -15,12 +15,13 @@ import { hasPerm } from '@/lib/permissions';
 export default function QCQueue({ permissions = [] }: { permissions?: string[] }) {
     const [items, setItems] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [filter, setFilter] = useState('all'); // all, in_production, in_qc, received_attention
+    const [filter, setFilter] = useState('all'); // all, unassigned, in_progress
 
     const [filters, setFilters] = useState({
         ticketId: '',
         customerName: '',
         productType: '',
+        category: '',
         status: '',
         startDate: '',
         endDate: ''
@@ -51,14 +52,19 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
     };
 
     const tabFilteredItems = items.filter(item => {
-        if (filter === 'in_production') return item.status === 'IN_PRODUCTION';
-        if (filter === 'in_qc') return item.status === 'IN_QC';
-        if (filter === 'received_attention') return item.needs_qc_attention;
+        const assignmentCount = item.work_assignments?.length || 0;
+        if (filter === 'unassigned') return assignmentCount === 0;
+        if (filter === 'in_progress') return assignmentCount > 0;
         return true;
     });
 
     const uniqueProductTypes = [...new Set(tabFilteredItems.map(i => i.product_type_name))].filter(Boolean);
     const uniqueStatuses = [...new Set(tabFilteredItems.map(i => i.status))].filter(Boolean);
+    const uniqueCategories = [...new Set(
+        tabFilteredItems.flatMap(item =>
+            item.work_assignments?.map((wa: any) => wa.category_types?.name).filter(Boolean) || []
+        )
+    )].filter(Boolean);
 
     const filteredItems = tabFilteredItems.filter(item => {
         let match = true;
@@ -73,6 +79,13 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
 
         if (filters.productType && item.product_type_name !== filters.productType) {
             match = false;
+        }
+
+        if (filters.category) {
+            const hasMatchingCategory = item.work_assignments?.some((wa: any) => wa.category_types?.name === filters.category);
+            if (!hasMatchingCategory) {
+                match = false;
+            }
         }
 
         if (filters.status && item.status !== filters.status) {
@@ -99,6 +112,26 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
         permissions.includes('manage_qc') ||
         (permissions.length > 0 && hasPerm(permissions, 'manage_qc'));
 
+    const getCategoryBadgeClass = (categoryName) => {
+        const normalized = (categoryName || '').trim().toLowerCase();
+
+        if (normalized === 'sewing') return 'bg-sky-50 text-sky-700';
+        if (normalized === 'amendment') return 'bg-rose-50 text-rose-700';
+        if (normalized === 'laundry') return 'bg-emerald-50 text-emerald-700';
+
+        const palette = [
+            'bg-amber-50 text-amber-700',
+            'bg-sky-50 text-sky-700',
+            'bg-emerald-50 text-emerald-700',
+            'bg-rose-50 text-rose-700',
+            'bg-violet-50 text-violet-700',
+            'bg-orange-50 text-orange-700',
+        ];
+
+        const value = (categoryName || '').split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
+        return palette[value % palette.length];
+    };
+
     return (
         <div className="space-y-6">
             <div className="flex justify-between items-center">
@@ -116,25 +149,18 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
                         All Items
                     </button>
                     <button
-                        onClick={() => setFilter('in_production')}
-                        className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${filter === 'in_production' ? 'bg-white shadow text-maison-primary' : 'text-gray-500 hover:text-gray-700'
+                        onClick={() => setFilter('unassigned')}
+                        className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${filter === 'unassigned' ? 'bg-white shadow text-maison-primary' : 'text-gray-500 hover:text-gray-700'
                             }`}
                     >
-                        New Items
+                        Unassigned
                     </button>
                     <button
-                        onClick={() => setFilter('in_qc')}
-                        className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${filter === 'in_qc' ? 'bg-white shadow text-maison-primary' : 'text-gray-500 hover:text-gray-700'
+                        onClick={() => setFilter('in_progress')}
+                        className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${filter === 'in_progress' ? 'bg-white shadow text-maison-primary' : 'text-gray-500 hover:text-gray-700'
                             }`}
                     >
-                        Assigned
-                    </button>
-                    <button
-                        onClick={() => setFilter('received_attention')}
-                        className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${filter === 'received_attention' ? 'bg-white shadow text-maison-primary' : 'text-gray-500 hover:text-gray-700'
-                            }`}
-                    >
-                        Needs Attention
+                        In Progress
                     </button>
                 </div>
             </div>
@@ -180,6 +206,20 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
                         </select>
                     </div>
 
+                    <div className="w-full sm:w-auto min-w-[140px]">
+                        <label className="block text-xs font-semibold text-gray-500 mb-1">Category</label>
+                        <select
+                            value={filters.category}
+                            onChange={(e) => setFilters(prev => ({ ...prev, category: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-maison-primary/20 bg-white"
+                        >
+                            <option value="">All Categories</option>
+                            {uniqueCategories.map(category => (
+                                <option key={category} value={category}>{category}</option>
+                            ))}
+                        </select>
+                    </div>
+
                     <div className="w-full sm:w-auto min-w-[130px]">
                         <label className="block text-xs font-semibold text-gray-500 mb-1">Status</label>
                         <select
@@ -220,6 +260,7 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
                                 ticketId: '',
                                 customerName: '',
                                 productType: '',
+                                category: '',
                                 status: '',
                                 startDate: '',
                                 endDate: ''
@@ -234,7 +275,7 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
             </Card>
 
             <Card padding="p-0">
-                <Table headers={['Item Key', 'Customer Name', 'Product Type', 'Status', 'Assigned Date']}>
+                <Table headers={['Item Key', 'Customer Name', 'Product Type', 'Categories', 'Status', 'Assigned Date']}>
                     {filteredItems.map((item) => {
                         const assignedCategories = item.work_assignments?.map((wa: any) => wa.category_types?.name).filter(Boolean) || [];
                         const uniqueCategories = [...new Set(assignedCategories)];
@@ -251,28 +292,39 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
                                 <TableCell className="font-medium font-mono text-xs">{item.item_key}</TableCell>
                                 <TableCell className="font-medium">{item.customer_name}</TableCell>
                                 <TableCell>{item.product_type_name}</TableCell>
-                                <TableCell>
-                                    <div className="flex flex-col gap-1 items-start">
-                                        <div className="flex gap-2">
-                                            <Badge
-                                                variant={
-                                                    item.status === 'IN_PRODUCTION'
-                                                        ? 'brand'
-                                                        : item.status === 'IN_QC'
-                                                            ? 'warning'
-                                                            : 'neutral'
-                                                }
-                                            >
-                                                {item.status}
-                                            </Badge>
-                                            {item.needs_qc_attention && <Badge variant="warning">Check</Badge>}
+                                <TableCell className="whitespace-normal">
+                                    {uniqueCategories.length > 0 ? (
+                                        <div className="flex flex-wrap gap-1">
+                                            {uniqueCategories.map((category) => (
+                                                <Badge
+                                                    key={category}
+                                                    variant="neutral"
+                                                    className={getCategoryBadgeClass(category)}
+                                                >
+                                                    {category}
+                                                </Badge>
+                                            ))}
                                         </div>
-                                        {uniqueCategories.length > 0 && (
-                                            <div className="flex gap-1 mt-1">
-                                                <Badge variant="neutral">{uniqueCategories[0] as string}</Badge>
-                                                {uniqueCategories.length > 1 && <Badge variant="neutral">+{uniqueCategories.length - 1}</Badge>}
-                                            </div>
-                                        )}
+                                    ) : (
+                                        <span className="text-gray-300">-</span>
+                                    )}
+                                </TableCell>
+                                <TableCell>
+                                    <div className="flex gap-2">
+                                        <Badge
+                                            variant={
+                                                item.status === 'IN_PRODUCTION'
+                                                    ? 'brand'
+                                                    : item.status === 'OUT_OF_PRODUCTION'
+                                                        ? 'success'
+                                                        : item.work_assignments?.length
+                                                        ? 'warning'
+                                                        : 'neutral'
+                                            }
+                                        >
+                                            {item.status === 'OUT_OF_PRODUCTION' ? 'Out of Production' : item.status}
+                                        </Badge>
+                                        {item.needs_qc_attention && <Badge variant="warning">Check</Badge>}
                                     </div>
                                 </TableCell>
                                 <TableCell className="text-gray-500">
@@ -284,7 +336,7 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
 
                     {filteredItems.length === 0 && !loading && (
                         <tr>
-                            <td colSpan="5" className="px-6 py-8 text-center text-gray-500 text-sm">
+                            <td colSpan="6" className="px-6 py-8 text-center text-gray-500 text-sm">
                                 No items match the selected filters.
                             </td>
                         </tr>

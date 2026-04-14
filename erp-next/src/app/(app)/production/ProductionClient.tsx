@@ -6,6 +6,7 @@ import { db } from '@/services/db';
 import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
 import { Table, TableRow, TableCell, Badge } from '@/components/UI/Table';
+import { Modal } from '@/components/UI/Modal';
 import { CSVImporter } from '@/components/Shared/CSVImporter';
 import { Plus, Trash2, Edit2, Search, FilterX, Clock, CheckCircle2, ChevronDown, ChevronRight } from 'lucide-react';
 import { useRouter } from 'next/navigation';
@@ -16,6 +17,8 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
     const router = useRouter();
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [items, setItems] = useState([]);
+    const [rateCards, setRateCards] = useState([]);
+    const [tailors, setTailors] = useState([]);
     const [loading, setLoading] = useState(true);
     const [filters, setFilters] = useState({
         ticketId: '',
@@ -26,10 +29,32 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
         endDate: ''
     });
     const [expandedGroups, setExpandedGroups] = useState({});
+    const [activeCutterDialog, setActiveCutterDialog] = useState({ itemId: '', mode: '' });
+    const [cutterForm, setCutterForm] = useState({
+        itemId: '',
+        assignmentId: '',
+        category_type_id: '',
+        task_type_id: '',
+        tailor_id: '',
+    });
+    const [cutterSearch, setCutterSearch] = useState('');
 
     useEffect(() => {
-        loadItems();
+        loadPageData();
     }, []);
+
+    const loadPageData = async () => {
+        setLoading(true);
+        const [data, ratesData, tailorsData] = await Promise.all([
+            db.getItems(),
+            db.getRates(),
+            db.getTailors()
+        ]);
+        setItems(data);
+        setRateCards(ratesData);
+        setTailors(tailorsData);
+        setLoading(false);
+    };
 
     const loadItems = async () => {
         setLoading(true);
@@ -41,13 +66,73 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
     const getStatusVariant = (status) => {
         switch (status) {
             case 'IN_PRODUCTION': return 'brand';
-            case 'IN_QC': return 'warning';
-            case 'COMPLETED': return 'success';
+            case 'OUT_OF_PRODUCTION': return 'success';
             case 'CANCELLED': return 'danger';
-            case 'Hold': return 'warning';
             default: return 'neutral';
         }
     };
+
+    const getStatusLabel = (status) => {
+        if (status === 'IN_PRODUCTION') return 'In Production';
+        if (status === 'OUT_OF_PRODUCTION') return 'Out of Production';
+        return status;
+    };
+
+    const getCategoryBadgeClass = (categoryName) => {
+        const normalized = (categoryName || '').trim().toLowerCase();
+
+        if (normalized === 'sewing') return 'bg-sky-50 text-sky-700';
+        if (normalized === 'amendment') return 'bg-rose-50 text-rose-700';
+        if (normalized === 'laundry') return 'bg-emerald-50 text-emerald-700';
+
+        const palette = [
+            'bg-amber-50 text-amber-700',
+            'bg-sky-50 text-sky-700',
+            'bg-emerald-50 text-emerald-700',
+            'bg-rose-50 text-rose-700',
+            'bg-violet-50 text-violet-700',
+            'bg-orange-50 text-orange-700',
+        ];
+
+        const value = (categoryName || '').split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
+        return palette[value % palette.length];
+    };
+
+    const getCuttingCategoryId = (item) => {
+        const cuttingRate = rateCards.find(rate =>
+            rate.product_type_id === item.product_type_id &&
+            rate.category_name?.toLowerCase() === 'cutting'
+        );
+
+        return cuttingRate?.category_type_id || '';
+    };
+
+    const getCuttingAssignment = (item) => {
+        return item.work_assignments?.find(assignment =>
+            assignment.category_types?.name?.toLowerCase() === 'cutting'
+        ) || null;
+    };
+
+    const getCuttingTaskOptions = (item) => {
+        const cuttingCategoryId = getCuttingCategoryId(item);
+
+        return rateCards
+            .filter(rate =>
+                rate.product_type_id === item.product_type_id &&
+                rate.category_type_id === cuttingCategoryId
+            )
+            .map(rate => ({
+                id: rate.task_type_id,
+                name: rate.name
+            }))
+            .filter((option, index, all) => all.findIndex(task => task.id === option.id) === index);
+    };
+
+    const activeTailors = tailors.filter(tailor => tailor.active);
+    const activeCutterItem = items.find(item => item.id === activeCutterDialog.itemId) || null;
+    const filteredCutterTailors = activeTailors.filter(tailor =>
+        tailor.name?.toLowerCase().includes(cutterSearch.trim().toLowerCase())
+    );
 
     const [editingTicket, setEditingTicket] = useState(null);
 const [editCustomerName, setEditCustomerName] = useState('');
@@ -89,8 +174,98 @@ const handleDeleteItem = async (id) => {
         }
     };
 
-    const totalBacklog = items.filter(i => i.status !== 'COMPLETED' && i.status !== 'CANCELLED').length;
-    const totalCompleted = items.filter(i => i.status === 'COMPLETED').length;
+    const openCutterForm = (item, mode = 'create') => {
+        const cuttingAssignment = getCuttingAssignment(item);
+        const cuttingCategoryId = getCuttingCategoryId(item) || cuttingAssignment?.category_type_id || '';
+
+        setActiveCutterDialog({ itemId: item.id, mode });
+        setCutterForm({
+            itemId: item.id,
+            assignmentId: mode === 'edit' ? (cuttingAssignment?.id || '') : '',
+            category_type_id: cuttingCategoryId,
+            task_type_id: mode === 'edit' ? (cuttingAssignment?.task_type_id || '') : '',
+            tailor_id: mode === 'edit' ? (cuttingAssignment?.tailor_id || '') : '',
+        });
+        setCutterSearch(mode === 'edit' ? (cuttingAssignment?.tailors?.name || '') : '');
+    };
+
+    const openDeleteCutterDialog = (item) => {
+        const cuttingAssignment = getCuttingAssignment(item);
+
+        setActiveCutterDialog({ itemId: item.id, mode: 'delete' });
+        setCutterForm({
+            itemId: item.id,
+            assignmentId: cuttingAssignment?.id || '',
+            category_type_id: cuttingAssignment?.category_type_id || getCuttingCategoryId(item) || '',
+            task_type_id: cuttingAssignment?.task_type_id || '',
+            tailor_id: cuttingAssignment?.tailor_id || '',
+        });
+    };
+
+    const closeCutterDialog = () => {
+        setActiveCutterDialog({ itemId: '', mode: '' });
+        setCutterForm({
+            itemId: '',
+            assignmentId: '',
+            category_type_id: '',
+            task_type_id: '',
+            tailor_id: '',
+        });
+        setCutterSearch('');
+    };
+
+    const handleCreateCutterAssignment = async (item) => {
+        if (!canManageProduction) return;
+
+        if (!cutterForm.category_type_id || !cutterForm.task_type_id || !cutterForm.tailor_id) {
+            alert('Please select a cutter and task type.');
+            return;
+        }
+
+        await db.createWorkAssignment({
+            item_id: item.id,
+            category_type_id: cutterForm.category_type_id,
+            task_type_id: cutterForm.task_type_id,
+            tailor_id: cutterForm.tailor_id
+        });
+
+        closeCutterDialog();
+        await loadItems();
+    };
+
+    const handleUpdateCutterAssignment = async () => {
+        if (!canManageProduction) return;
+
+        if (!cutterForm.assignmentId || !cutterForm.category_type_id || !cutterForm.task_type_id || !cutterForm.tailor_id) {
+            alert('Please select a cutter and task type.');
+            return;
+        }
+
+        await db.updateWorkAssignment(cutterForm.assignmentId, {
+            category_type_id: cutterForm.category_type_id,
+            task_type_id: cutterForm.task_type_id,
+            tailor_id: cutterForm.tailor_id
+        });
+
+        closeCutterDialog();
+        await loadItems();
+    };
+
+    const handleDeleteCutterAssignment = async (assignmentId) => {
+        if (!canManageProduction) return;
+        await db.deleteWorkAssignment(assignmentId);
+        closeCutterDialog();
+        await loadItems();
+    };
+
+    const handleStatusChange = async (itemId, newStatus) => {
+        if (!canManageProduction) return;
+        await db.updateItemStatus(itemId, newStatus);
+        await loadItems();
+    };
+
+    const totalBacklog = items.filter(i => i.status !== 'OUT_OF_PRODUCTION' && i.status !== 'CANCELLED').length;
+    const totalCompleted = items.filter(i => i.status === 'OUT_OF_PRODUCTION').length;
 
     const uniqueProductTypes = [...new Set(items.map(i => i.product_type_name))].filter(Boolean);
     const uniqueStatuses = [...new Set(items.map(i => i.status))].filter(Boolean);
@@ -241,7 +416,7 @@ const handleDeleteItem = async (id) => {
                         <CheckCircle2 size={24} />
                     </div>
                     <div>
-                        <p className="text-sm font-medium text-gray-500">Total Items Completed</p>
+                        <p className="text-sm font-medium text-gray-500">Total Out of Production</p>
                         <h3 className="text-2xl font-serif text-maison-primary">{totalCompleted}</h3>
                     </div>
                 </Card>
@@ -367,8 +542,8 @@ const handleDeleteItem = async (id) => {
                                             <span className="text-sm text-maison-secondary">
                                                 {group.items.length} {group.items.length === 1 ? 'Product' : 'Products'} Total
                                             </span>
-                                            <Badge variant={group.items.filter(i => i.status === 'COMPLETED').length === group.items.length ? 'success' : 'neutral'}>
-                                                {group.items.filter(i => i.status === 'COMPLETED').length} / {group.items.length} Completed
+                                            <Badge variant={group.items.filter(i => i.status === 'OUT_OF_PRODUCTION').length === group.items.length ? 'success' : 'neutral'}>
+                                                {group.items.filter(i => i.status === 'OUT_OF_PRODUCTION').length} / {group.items.length} Out of Production
                                             </Badge>
                                         </div>
                                     </div>
@@ -419,15 +594,51 @@ const handleDeleteItem = async (id) => {
                             {/* Accordion Body */}
                             {isExpanded && (
                                 <div className="bg-white">
-                                    <Table headers={['Item Key', 'Product', 'Status', 'Date', 'Actions']}>
-                                        {group.items.map((item) => (
+                                    <Table headers={['Item Key', 'Product', 'Categories', 'Status', 'Date', 'Actions']}>
+                                        {group.items.map((item) => {
+                                            const assignedCategories = item.work_assignments?.map(wa => wa.category_types?.name).filter(Boolean) || [];
+                                            const uniqueCategories = [...new Set(assignedCategories)];
+                                            const cuttingAssignment = getCuttingAssignment(item);
+                                            const cuttingTaskOptions = getCuttingTaskOptions(item);
+                                            const itemCanAssignCutting = Boolean(getCuttingCategoryId(item)) && cuttingTaskOptions.length > 0;
+                                            const showCuttingControls = Boolean(cuttingAssignment) || itemCanAssignCutting;
+
+                                            return (
                                             <TableRow key={item.id}>
                                                 <TableCell className="font-medium font-mono text-xs">{item.item_key}</TableCell>
                                                 <TableCell>{item.product_type_name}</TableCell>
+                                                <TableCell className="whitespace-normal">
+                                                    {uniqueCategories.length > 0 ? (
+                                                        <div className="flex flex-wrap gap-1">
+                                                            {uniqueCategories.map(category => (
+                                                                <Badge
+                                                                    key={category}
+                                                                    variant="neutral"
+                                                                    className={getCategoryBadgeClass(category)}
+                                                                >
+                                                                    {category}
+                                                                </Badge>
+                                                            ))}
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-gray-300">-</span>
+                                                    )}
+                                                </TableCell>
                                                 <TableCell>
-                                                    <Badge variant={getStatusVariant(item.status)}>
-                                                        {item.status === 'COMPLETED' ? 'Received' : item.status}
-                                                    </Badge>
+                                                    {canManageProduction ? (
+                                                        <select
+                                                            value={item.status}
+                                                            onChange={(e) => handleStatusChange(item.id, e.target.value)}
+                                                            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-maison-primary/20"
+                                                        >
+                                                            <option value="IN_PRODUCTION">In Production</option>
+                                                            <option value="OUT_OF_PRODUCTION">Out of Production</option>
+                                                        </select>
+                                                    ) : (
+                                                        <Badge variant={getStatusVariant(item.status)}>
+                                                            {getStatusLabel(item.status)}
+                                                        </Badge>
+                                                    )}
                                                     {item.needs_qc_attention && (
                                                         <Badge variant="warning" className="ml-2">Needs QC</Badge>
                                                     )}
@@ -436,17 +647,50 @@ const handleDeleteItem = async (id) => {
                                                     {item.created_at ? format(new Date(item.created_at), 'MMM d, yyyy') : '-'}
                                                 </TableCell>
                                                 <TableCell>
-                                                    <button
-                                                        onClick={() => handleDeleteItem(item.id)}
-                                                        disabled={!canManageProduction}
-                                                        className={`p-1.5 rounded transition-colors ${!canManageProduction ? 'text-gray-300 cursor-not-allowed' : 'text-gray-400 hover:text-red-500 hover:bg-red-50'}`}
-                                                        title="Delete Item"
-                                                    >
-                                                        <Trash2 size={16} />
-                                                    </button>
+                                                    <div className="flex items-center gap-2">
+                                                        {canManageProduction && showCuttingControls && (
+                                                            <>
+                                                                {!cuttingAssignment ? (
+                                                                    <Button
+                                                                        size="sm"
+                                                                        variant="secondary"
+                                                                        onClick={() => openCutterForm(item, 'create')}
+                                                                    >
+                                                                        Assign Cutter
+                                                                    </Button>
+                                                                ) : (
+                                                                    <>
+                                                                        <Button
+                                                                            size="sm"
+                                                                            variant="secondary"
+                                                                            onClick={() => openCutterForm(item, 'edit')}
+                                                                        >
+                                                                            Edit Cutter
+                                                                        </Button>
+                                                                        <Button
+                                                                            size="sm"
+                                                                            variant="danger"
+                                                                            onClick={() => openDeleteCutterDialog(item)}
+                                                                        >
+                                                                            Delete Cutter
+                                                                        </Button>
+                                                                    </>
+                                                                )}
+                                                            </>
+                                                        )}
+
+                                                        <button
+                                                            onClick={() => handleDeleteItem(item.id)}
+                                                            disabled={!canManageProduction}
+                                                            className={`p-1.5 rounded transition-colors ${!canManageProduction ? 'text-gray-300 cursor-not-allowed' : 'text-gray-400 hover:text-red-500 hover:bg-red-50'}`}
+                                                            title="Delete Item"
+                                                        >
+                                                            <Trash2 size={16} />
+                                                        </button>
+                                                    </div>
                                                 </TableCell>
                                             </TableRow>
-                                        ))}
+                                        )})}
                                     </Table>
                                 </div>
                             )}
@@ -469,6 +713,115 @@ const handleDeleteItem = async (id) => {
                     onSuccess={loadItems}
                 />
             )}
+
+            <Modal
+                isOpen={Boolean(activeCutterDialog.itemId)}
+                onClose={closeCutterDialog}
+                title={
+                    activeCutterDialog.mode === 'create'
+                        ? 'Assign Cutter'
+                        : activeCutterDialog.mode === 'edit'
+                            ? 'Edit Cutter'
+                            : 'Delete Cutter'
+                }
+                maxWidth="max-w-md"
+            >
+                {activeCutterItem && (
+                    <div className="mb-4 rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
+                        <div className="flex items-center gap-3">
+                            <span className="font-mono text-xs text-maison-primary">{activeCutterItem.item_key}</span>
+                            <Badge variant="neutral">{activeCutterItem.product_type_name}</Badge>
+                        </div>
+                        <p className="mt-1 text-sm text-maison-secondary">
+                            Ticket: {activeCutterItem.ticket_number} | Customer: {activeCutterItem.customer_name}
+                        </p>
+                    </div>
+                )}
+
+                {activeCutterDialog.mode === 'delete' ? (
+                    <div className="space-y-4">
+                        <p className="text-sm text-gray-600">Remove this cutting assignment from the item?</p>
+                        <div className="flex justify-end gap-2">
+                            <Button size="sm" variant="ghost" onClick={closeCutterDialog}>
+                                Cancel
+                            </Button>
+                            <Button
+                                size="sm"
+                                variant="danger"
+                                onClick={() => handleDeleteCutterAssignment(cutterForm.assignmentId)}
+                            >
+                                Delete Cutter
+                            </Button>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="space-y-4">
+                        <div className="space-y-2">
+                            <input
+                                type="text"
+                                value={cutterSearch}
+                                onChange={(e) => {
+                                    setCutterSearch(e.target.value);
+                                    setCutterForm(prev => ({ ...prev, tailor_id: '' }));
+                                }}
+                                placeholder="Type cutter name..."
+                                className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-maison-primary/20"
+                            />
+                            <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white">
+                                {filteredCutterTailors.length > 0 ? filteredCutterTailors.map(tailor => (
+                                    <button
+                                        key={tailor.id}
+                                        type="button"
+                                        onClick={() => {
+                                            setCutterForm(prev => ({ ...prev, tailor_id: tailor.id }));
+                                            setCutterSearch(tailor.name);
+                                        }}
+                                        className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50"
+                                    >
+                                        <span>{tailor.name}</span>
+                                        <span className="text-xs text-gray-500">Band {tailor.band || 'A'}</span>
+                                    </button>
+                                )) : (
+                                    <div className="px-3 py-2 text-sm text-gray-500">No matching cutters found.</div>
+                                )}
+                            </div>
+                        </div>
+                        <select
+                            value={cutterForm.task_type_id}
+                            onChange={(e) => setCutterForm(prev => ({ ...prev, task_type_id: e.target.value }))}
+                            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-maison-primary/20"
+                        >
+                            <option value="">Select Cutting Task...</option>
+                            {activeCutterItem
+                                ? getCuttingTaskOptions(activeCutterItem).map(task => (
+                                    <option key={task.id} value={task.id}>
+                                        {task.name}
+                                    </option>
+                                ))
+                                : null}
+                        </select>
+                        <div className="flex justify-end gap-2">
+                            <Button size="sm" variant="ghost" onClick={closeCutterDialog}>
+                                Cancel
+                            </Button>
+                            <Button
+                                size="sm"
+                                onClick={() => {
+                                    const item = items.find(entry => entry.id === activeCutterDialog.itemId);
+                                    if (!item) return;
+                                    if (activeCutterDialog.mode === 'edit') {
+                                        handleUpdateCutterAssignment();
+                                    } else {
+                                        handleCreateCutterAssignment(item);
+                                    }
+                                }}
+                            >
+                                {activeCutterDialog.mode === 'edit' ? 'Save' : 'Assign'}
+                            </Button>
+                        </div>
+                    </div>
+                )}
+            </Modal>
         </div>
     );
 }

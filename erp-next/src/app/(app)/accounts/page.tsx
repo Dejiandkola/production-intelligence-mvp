@@ -17,6 +17,7 @@ export default function PendingVerification() {
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState('pending'); // all, pending, approved, rejected
+    const [reversingTaskId, setReversingTaskId] = useState(null);
 
     // Search & filter state
     const [searchCustomer, setSearchCustomer] = useState('');
@@ -92,12 +93,21 @@ useEffect(() => {
         return names;
     }, [tasks]);
 
+    const hasReversalRecord = (task) => {
+        return Boolean(
+            task.reversal_reason ||
+            task.reversal_notes ||
+            (typeof task.notes === 'string' && task.notes.includes('Reversal:'))
+        );
+    };
+
     const filteredTasks = useMemo(() => {
         return tasks.filter(task => {
             // Status tab filter
             if (filter === 'pending' && task.status !== 'CREATED') return false;
-            if (filter === 'approved' && task.status !== 'QC_PASSED' && task.status !== 'PAID') return false;
-            if (filter === 'rejected' && task.status !== 'QC_FAILED') return false;
+            if (filter === 'approved' && task.status !== 'Approved' && task.status !== 'PAID') return false;
+            if (filter === 'rejected' && task.status !== 'Rejected') return false;
+            if (filter === 'reversed' && !hasReversalRecord(task)) return false;
 
             // Customer name
             if (searchCustomer && !task.customer_name?.toLowerCase().includes(searchCustomer.toLowerCase())) return false;
@@ -134,17 +144,61 @@ useEffect(() => {
         });
     }, [tasks, filter, searchCustomer, searchTicket, searchTailor, searchTask, searchCategory, minAmount, maxAmount, dateFrom, dateTo]);
 
-    const handleApprove = async (taskId) => {
+    const handleApprove = async (task) => {
         if (!window.confirm("Confirm payment approval for this task?")) return;
-        await db.verifyTask(taskId, 'Approved');
+        if (task.status === 'REVERSED') {
+            await db.reopenReversedTask(task.id);
+        }
+        await db.verifyTask(task.id, 'Approved');
         loadTasks();
     };
 
-    const handleReject = async (taskId) => {
+    const handleReject = async (task) => {
         const reason = window.prompt("Enter rejection reason:");
         if (!reason) return;
-        await db.verifyTask(taskId, 'Rejected', reason);
+        if (task.status === 'REVERSED') {
+            await db.reopenReversedTask(task.id);
+        }
+        await db.verifyTask(task.id, 'Rejected', reason);
         loadTasks();
+    };
+
+    const handleReverse = async (task) => {
+        const statusLabel = task.status === 'Rejected' ? 'rejected' : 'approved';
+        const reason = window.prompt(`Enter reversal reason for this ${statusLabel} task:`);
+        if (!reason?.trim()) return;
+
+        try {
+            setReversingTaskId(task.id);
+            await db.reverseTask(task.id, reason);
+            await loadTasks();
+        } finally {
+            setReversingTaskId(null);
+        }
+    };
+
+    const getStatusVariant = (status, isReversed) => {
+        if (isReversed && status === 'CREATED') return 'warning';
+        if (status === 'Approved' || status === 'PAID') return 'success';
+        if (status === 'Rejected') return 'danger';
+        if (status === 'REVERSED') return 'warning';
+        return 'neutral';
+    };
+
+    const getReversalNote = (task) => {
+        return task.reversal_reason || task.reversal_notes || (
+            typeof task.notes === 'string' && task.notes.includes('Reversal:')
+                ? task.notes
+                : null
+        );
+    };
+
+    const getStatusLabel = (task) => {
+        if (task.status === 'CREATED' && hasReversalRecord(task)) {
+            return 'REOPENED'
+        }
+
+        return task.status;
     };
 
     if (accessDenied) return (
@@ -168,7 +222,7 @@ if (!authorized) return null;
                 </div>
 
                 <div className="flex bg-gray-100 p-1 rounded-lg">
-                    {['all', 'pending', 'approved', 'rejected'].map(tab => (
+                    {['all', 'pending', 'approved', 'rejected', 'reversed'].map(tab => (
                         <button
                             key={tab}
                             onClick={() => setFilter(tab)}
@@ -319,27 +373,62 @@ if (!authorized) return null;
                                 ₦{parseFloat(task.pay_amount || 0).toFixed(2)}
                             </TableCell>
                             <TableCell>
-                                {task.status === 'CREATED' ? (
-                                    <div className="flex gap-2">
+                                {task.status === 'CREATED' || task.status === 'REVERSED' ? (
+                                    <div className="space-y-2">
+                                        {hasReversalRecord(task) && (
+                                            <>
+                                                <Badge variant={getStatusVariant(task.status, true)}>
+                                                    {getStatusLabel(task)}
+                                                </Badge>
+                                                <div className="max-w-xs whitespace-normal text-xs text-amber-700">
+                                                    Payment reversed: {getReversalNote(task)}
+                                                </div>
+                                            </>
+                                        )}
+                                        <div className="flex gap-2">
                                         <Button
                                             size="sm"
                                             className="bg-emerald-600 hover:bg-emerald-700 text-white"
-                                            onClick={() => handleApprove(task.id)}
+                                            onClick={() => handleApprove(task)}
                                         >
                                             <Check size={16} className="mr-1" /> Approve
                                         </Button>
                                         <Button
                                             size="sm"
                                             variant="danger"
-                                            onClick={() => handleReject(task.id)}
+                                            onClick={() => handleReject(task)}
                                         >
                                             <XSquare size={16} className="mr-1" /> Reject
                                         </Button>
+                                        </div>
+                                    </div>
+                                ) : task.status === 'Approved' || task.status === 'Rejected' ? (
+                                    <div className="space-y-2">
+                                        <Badge variant={getStatusVariant(task.status, hasReversalRecord(task))}>
+                                            {getStatusLabel(task)}
+                                        </Badge>
+                                        <div>
+                                            <Button
+                                                size="sm"
+                                                variant="secondary"
+                                                isLoading={reversingTaskId === task.id}
+                                                onClick={() => handleReverse(task)}
+                                            >
+                                                Reverse
+                                            </Button>
+                                        </div>
                                     </div>
                                 ) : (
-                                    <Badge variant={task.status === 'QC_PASSED' || task.status === 'PAID' ? 'success' : 'danger'}>
-                                        {task.status}
-                                    </Badge>
+                                    <div className="space-y-2">
+                                        <Badge variant={getStatusVariant(task.status, hasReversalRecord(task))}>
+                                            {getStatusLabel(task)}
+                                        </Badge>
+                                        {hasReversalRecord(task) && getReversalNote(task) && (
+                                            <div className="max-w-xs whitespace-normal text-xs text-amber-700">
+                                                Payment reversed: {getReversalNote(task)}
+                                            </div>
+                                        )}
+                                    </div>
                                 )}
                             </TableCell>
                         </TableRow>

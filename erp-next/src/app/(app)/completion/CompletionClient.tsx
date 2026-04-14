@@ -35,8 +35,7 @@ export default function Receiving({ canManageCompletion }: { canManageCompletion
     };
 
     const uniqueProductTypes = [...new Set(items.map(i => i.product_type_name))].filter(Boolean);
-    // Ensure 'IN_QC' is an option even if no items currently have that status
-    const uniqueStatuses = [...new Set([...items.map(i => i.status === 'COMPLETED' ? 'Received' : i.status), 'IN_QC', 'Received'])].filter(Boolean);
+    const uniqueStatuses = [...new Set(items.map(i => i.receiving_status))].filter(Boolean);
 
     const filteredItems = items.filter(item => {
         let match = true;
@@ -44,10 +43,7 @@ export default function Receiving({ canManageCompletion }: { canManageCompletion
         if (filters.ticketId && !item.ticket_number?.toLowerCase().includes(filters.ticketId.toLowerCase())) match = false;
         if (filters.customerName && !item.customer_name?.toLowerCase().includes(filters.customerName.toLowerCase())) match = false;
         if (filters.productType && item.product_type_name !== filters.productType) match = false;
-        if (filters.status) {
-            const itemDisplayStatus = item.status === 'COMPLETED' ? 'Received' : item.status;
-            if (itemDisplayStatus !== filters.status) match = false;
-        }
+        if (filters.status && item.receiving_status !== filters.status) match = false;
 
         if (filters.startDate || filters.endDate) {
             const itemDate = new Date(item.created_at);
@@ -84,7 +80,7 @@ export default function Receiving({ canManageCompletion }: { canManageCompletion
             return;
         }
         if (!window.confirm("Mark item as received?")) return;
-        await db.updateItemStatus(itemId, 'COMPLETED');
+        await db.updateItemReceivingStatus(itemId, true);
         loadItems();
     };
 
@@ -94,7 +90,7 @@ export default function Receiving({ canManageCompletion }: { canManageCompletion
             return;
         }
         if (!window.confirm("Unmark item as received?")) return;
-        await db.updateItemStatus(itemId, 'IN_QC');
+        await db.updateItemReceivingStatus(itemId, false);
         loadItems();
     };
 
@@ -174,7 +170,7 @@ export default function Receiving({ canManageCompletion }: { canManageCompletion
                     </div>
                     <Button
                         variant="ghost"
-                        onClick={() => setFilters({ ticketId: '', customerName: '', productType: '', status: 'IN_QC', startDate: '', endDate: '' })}
+                        onClick={() => setFilters({ ticketId: '', customerName: '', productType: '', status: '', startDate: '', endDate: '' })}
                         className="text-gray-500 hover:text-gray-700 bg-gray-50 px-3"
                         title="Clear Filters"
                     >
@@ -211,8 +207,8 @@ export default function Receiving({ canManageCompletion }: { canManageCompletion
                                             <span className="text-sm text-maison-secondary">
                                                 {group.items.length} {group.items.length === 1 ? 'Product' : 'Products'} Total
                                             </span>
-                                            <Badge variant={group.items.filter(i => i.status === 'COMPLETED').length === group.items.length ? 'success' : 'neutral'}>
-                                                {group.items.filter(i => i.status === 'COMPLETED').length} / {group.items.length} Completed
+                                            <Badge variant={group.items.filter(i => i.is_received).length === group.items.length ? 'success' : 'neutral'}>
+                                                {group.items.filter(i => i.is_received).length} / {group.items.length} Received
                                             </Badge>
                                         </div>
                                     </div>
@@ -228,12 +224,12 @@ export default function Receiving({ canManageCompletion }: { canManageCompletion
                                                 <TableCell className="font-medium font-mono text-xs">{item.item_key}</TableCell>
                                                 <TableCell>{item.product_type_name}</TableCell>
                                                 <TableCell>
-                                                    <Badge variant={item.status === 'COMPLETED' ? 'success' : 'brand'}>
-                                                        {item.status === 'COMPLETED' ? 'Received' : item.status}
+                                                    <Badge variant={item.is_received ? 'success' : 'brand'}>
+                                                        {item.receiving_status}
                                                     </Badge>
                                                 </TableCell>
                                                 <TableCell>
-                                                    {item.status !== 'COMPLETED' ? (
+                                                    {!item.is_received ? (
                                                         <Button
                                                             size="sm"
                                                             onClick={() => handleReceive(item.id)}

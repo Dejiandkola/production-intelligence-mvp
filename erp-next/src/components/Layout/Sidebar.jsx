@@ -4,7 +4,6 @@ import React from 'react';
 import { LayoutDashboard, ShoppingBag, Box, Users, Scissors, PieChart, Shirt, CheckCircle2, X } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { db } from '@/services/db';
 import clsx from 'clsx';
 
 const navigation = [
@@ -23,19 +22,6 @@ const navigation = [
 
 export function Sidebar({ isOpen, onClose }) {
     const pathname = usePathname();
-    const [pendingPaymentsCount, setPendingPaymentsCount] = React.useState(0);
-
-    React.useEffect(() => {
-        const fetchCount = async () => {
-            try {
-                const count = await db.getPendingPaymentsCount();
-                setPendingPaymentsCount(count);
-            } catch (err) {
-                console.error(err);
-            }
-        };
-        fetchCount();
-    }, [pathname]);
 
     return (
         <>
@@ -101,11 +87,6 @@ export function Sidebar({ isOpen, onClose }) {
                                     strokeWidth={1.5}
                                 />
                                 {item.name}
-                                {item.name === 'Accounts' && pendingPaymentsCount > 0 && (
-                                    <span className="ml-auto bg-maison-accent-dim/30 text-maison-accent py-0.5 px-2 rounded-full text-xs font-semibold flex items-center justify-center">
-                                        {pendingPaymentsCount}
-                                    </span>
-                                )}
                             </Link>
                         );
                     })}

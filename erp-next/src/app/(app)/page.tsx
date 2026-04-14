@@ -10,6 +10,13 @@ import { Shirt, Scissors, ShoppingBag, CheckCircle2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { startOfWeek, endOfWeek, parseISO, isWithinInterval } from 'date-fns';
 
+function toInputDate(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
 export default function Dashboard() {
     const router = useRouter();
     const [loading, setLoading] = useState(true);
@@ -27,8 +34,8 @@ export default function Dashboard() {
 
     // Default to current week
     const [dateRange, setDateRange] = useState({
-        start: startOfWeek(new Date(), { weekStartsOn: 1 }).toISOString().split('T')[0],
-        end: endOfWeek(new Date(), { weekStartsOn: 1 }).toISOString().split('T')[0]
+        start: toInputDate(startOfWeek(new Date(), { weekStartsOn: 1 })),
+        end: toInputDate(endOfWeek(new Date(), { weekStartsOn: 1 }))
     });
 
     useEffect(() => {
@@ -69,7 +76,7 @@ export default function Dashboard() {
         const [allItems, allTasks, payroll] = await Promise.all([
             db.getItems(),
             db.getTasks(),
-            db.getWeeklyPayroll(startDate.toISOString(), endDate.toISOString())
+            db.getWeeklyPayroll(dateRange.start, dateRange.end)
         ]);
 
         const items = allItems.filter(item => {
@@ -77,21 +84,21 @@ export default function Dashboard() {
             return isWithinInterval(date, { start: startDate, end: endDate });
         });
 
-        const tasks = allTasks.filter(task => { // Usually based on completion date, but created_at for MVP
-            const date = new Date(task.created_at);
+        const tasks = allTasks.filter(task => {
+            const date = new Date(task.updated_at || task.created_at);
             return isWithinInterval(date, { start: startDate, end: endDate });
         });
 
-        // 1. Active Items (Not Received, Not Cancelled)
-        const activeItems = items.filter(i => i.status !== 'COMPLETED' && i.status !== 'CANCELLED').length;
+        // 1. Active Items (Still in production, not cancelled)
+        const activeItems = items.filter(i => i.status !== 'OUT_OF_PRODUCTION' && i.status !== 'CANCELLED').length;
 
         // 2. Approved Pay (Revenue/Cost context) - Sum of approved tailor pay
-        const verifiedTasks = tasks.filter(t => t.status === 'QC_PASSED' || t.status === 'PAID');
+        const verifiedTasks = tasks.filter(t => t.status === 'Approved' || t.status === 'PAID');
         const totalRevenue = verifiedTasks.reduce((sum, t) => sum + (Number(t.pay_amount) || 0), 0);
 
         // 3. Status Breakdown
         const productionCount = items.filter(i => i.status === 'IN_PRODUCTION').length;
-        const completedCount = items.filter(i => i.status === 'COMPLETED').length;
+        const completedCount = items.filter(i => i.status === 'OUT_OF_PRODUCTION').length;
 
         // 4. Pending Tasks
         const pendingVerification = tasks.filter(t => t.status === 'CREATED').length;
@@ -103,7 +110,7 @@ export default function Dashboard() {
             if (!productStats[item.product_type_name]) {
                 productStats[item.product_type_name] = { produced: 0, backlog: 0 };
             }
-            if (item.status === 'COMPLETED') {
+            if (item.status === 'OUT_OF_PRODUCTION') {
                 productStats[item.product_type_name].produced++;
             } else {
                 productStats[item.product_type_name].backlog++;
@@ -206,11 +213,11 @@ if (!authorized) return null;
                             <CheckCircle2 size={20} />
                         </div>
                     </div>
-                    <p className="text-sm font-medium text-gray-500">Completed</p>
+                    <p className="text-sm font-medium text-gray-500">Out of Production</p>
                     <div className="flex items-end gap-3 mt-1">
                         <h3 className="text-3xl font-serif text-maison-primary">{stats.completedCount}</h3>
                     </div>
-                    <p className="text-xs text-gray-400 mt-2">Items received</p>
+                    <p className="text-xs text-gray-400 mt-2">Items no longer in production</p>
                 </Card>
 
                 {/* Total Cost/Revenue involved */}
