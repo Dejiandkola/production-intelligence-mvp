@@ -30,7 +30,7 @@ export default function Receiving({ canManageCompletion }: { canManageCompletion
     const loadItems = async () => {
         setLoading(true);
         const data = await db.getItems();
-        setItems(data.filter(i => i.status !== 'CANCELLED'));
+        setItems(data.filter(i => i.status !== 'CANCELLED' && i.status !== 'ARCHIVED'));
         setLoading(false);
     };
 

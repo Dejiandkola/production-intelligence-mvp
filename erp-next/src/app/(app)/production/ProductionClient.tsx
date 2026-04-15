@@ -66,6 +66,7 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
     const getStatusVariant = (status) => {
         switch (status) {
             case 'IN_PRODUCTION': return 'brand';
+            case 'ARCHIVED': return 'warning';
             case 'OUT_OF_PRODUCTION': return 'success';
             case 'CANCELLED': return 'danger';
             default: return 'neutral';
@@ -74,8 +75,22 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
 
     const getStatusLabel = (status) => {
         if (status === 'IN_PRODUCTION') return 'In Production';
+        if (status === 'ARCHIVED') return 'Archived';
         if (status === 'OUT_OF_PRODUCTION') return 'Out of Production';
         return status;
+    };
+
+    const getStatusSelectClass = (status) => {
+        switch (status) {
+            case 'IN_PRODUCTION':
+                return 'border-sky-200 bg-sky-50 text-sky-800';
+            case 'ARCHIVED':
+                return 'border-amber-200 bg-amber-50 text-amber-800';
+            case 'OUT_OF_PRODUCTION':
+                return 'border-emerald-200 bg-emerald-50 text-emerald-800';
+            default:
+                return 'border-gray-200 bg-white text-gray-700';
+        }
     };
 
     const getCategoryBadgeClass = (categoryName) => {
@@ -133,35 +148,40 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
     const filteredCutterTailors = activeTailors.filter(tailor =>
         tailor.name?.toLowerCase().includes(cutterSearch.trim().toLowerCase())
     );
-
     const [editingTicket, setEditingTicket] = useState(null);
-const [editCustomerName, setEditCustomerName] = useState('');
+    const [editCustomerName, setEditCustomerName] = useState('');
 
-const handleEditTicket = (group) => {
-    setEditingTicket(group.ticket_id);
-    setEditCustomerName(group.customer_name);
-};
+    const handleEditTicket = (group) => {
+        setEditingTicket(group.ticket_id);
+        setEditCustomerName(group.customer_name);
+    };
 
-const handleSaveTicket = async (ticketId) => {
-    if (!editCustomerName.trim()) return;
-    try {
-        await db.updateTicket(ticketId, { customer_name: editCustomerName.trim() });
-        await loadItems();
+    const resetTicketEdit = () => {
         setEditingTicket(null);
-    } catch (err) {
-        alert(err.message);
-    }
-};
+        setEditCustomerName('');
+    };
 
-const handleDeleteTicket = async (group) => {
-    if (!window.confirm(`Are you sure you want to permanently delete ticket ${group.ticket_id} and all ${group.items.length} item(s) under it? This cannot be undone.`)) return;
-    try {
-        await db.deleteTicket(group.realTicketId);
-        await loadItems();
-    } catch (err) {
-        alert(err.message);
-    }
-};
+    const handleSaveTicket = async (ticketId) => {
+        if (!editCustomerName.trim()) return;
+
+        try {
+            await db.updateTicket(ticketId, { customer_name: editCustomerName.trim() });
+            await loadItems();
+            resetTicketEdit();
+        } catch (err) {
+            alert(err.message);
+        }
+    };
+
+    const handleDeleteTicket = async (group) => {
+        if (!window.confirm(`Are you sure you want to permanently delete ticket ${group.ticket_id} and all ${group.items.length} item(s) under it? This cannot be undone.`)) return;
+        try {
+            await db.deleteTicket(group.realTicketId);
+            await loadItems();
+        } catch (err) {
+            alert(err.message);
+        }
+    };
 
 const handleDeleteItem = async (id) => {
         if (!canManageProduction) {
@@ -264,7 +284,7 @@ const handleDeleteItem = async (id) => {
         await loadItems();
     };
 
-    const totalBacklog = items.filter(i => i.status !== 'OUT_OF_PRODUCTION' && i.status !== 'CANCELLED').length;
+    const totalBacklog = items.filter(i => i.status !== 'OUT_OF_PRODUCTION' && i.status !== 'ARCHIVED' && i.status !== 'CANCELLED').length;
     const totalCompleted = items.filter(i => i.status === 'OUT_OF_PRODUCTION').length;
 
     const uniqueProductTypes = [...new Set(items.map(i => i.product_type_name))].filter(Boolean);
@@ -559,7 +579,7 @@ const handleDeleteItem = async (id) => {
                                                     Save
                                                 </button>
                                                 <button
-                                                    onClick={() => setEditingTicket(null)}
+                                                    onClick={resetTicketEdit}
                                                     className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700 border border-gray-200 rounded-md"
                                                 >
                                                     Cancel
@@ -626,14 +646,21 @@ const handleDeleteItem = async (id) => {
                                                 </TableCell>
                                                 <TableCell>
                                                     {canManageProduction ? (
-                                                        <select
-                                                            value={item.status}
-                                                            onChange={(e) => handleStatusChange(item.id, e.target.value)}
-                                                            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-maison-primary/20"
-                                                        >
-                                                            <option value="IN_PRODUCTION">In Production</option>
-                                                            <option value="OUT_OF_PRODUCTION">Out of Production</option>
-                                                        </select>
+                                                        <div className="relative min-w-[210px]">
+                                                            <select
+                                                                value={item.status}
+                                                                onChange={(e) => handleStatusChange(item.id, e.target.value)}
+                                                                className={`w-full appearance-none rounded-xl border px-4 py-2.5 pr-10 text-sm font-medium shadow-sm transition focus:outline-none focus:ring-2 focus:ring-maison-primary/20 ${getStatusSelectClass(item.status)}`}
+                                                            >
+                                                                <option value="IN_PRODUCTION">In Production</option>
+                                                                <option value="ARCHIVED">Archived</option>
+                                                                <option value="OUT_OF_PRODUCTION">Out of Production</option>
+                                                            </select>
+                                                            <ChevronDown
+                                                                size={16}
+                                                                className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-current opacity-70"
+                                                            />
+                                                        </div>
                                                     ) : (
                                                         <Badge variant={getStatusVariant(item.status)}>
                                                             {getStatusLabel(item.status)}
