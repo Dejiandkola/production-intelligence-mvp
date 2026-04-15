@@ -1,0 +1,6 @@
+DO $$
+BEGIN
+  ALTER TYPE public.item_status ADD VALUE IF NOT EXISTS 'OUT_OF_PRODUCTION';
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;

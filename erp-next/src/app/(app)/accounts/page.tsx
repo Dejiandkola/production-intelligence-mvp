@@ -1,14 +1,14 @@
 // @ts-nocheck
 "use client";
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { format } from 'date-fns';
+import { Check, ChevronDown, ChevronRight, Search, X, XSquare } from 'lucide-react';
 import { db } from '@/services/db';
 import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
-import { Table, TableRow, TableCell, Badge } from '@/components/UI/Table';
-import { Check, XSquare, Search, X } from 'lucide-react';
-import { format } from 'date-fns';
-import { useRouter } from 'next/navigation';
+import { Badge, Table, TableCell, TableRow } from '@/components/UI/Table';
 
 export default function PendingVerification() {
     const router = useRouter();
@@ -16,9 +16,10 @@ export default function PendingVerification() {
     const [accessDenied, setAccessDenied] = useState(false);
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [filter, setFilter] = useState('pending'); // all, pending, approved, rejected
+    const [filter, setFilter] = useState('pending');
+    const [reversingTaskId, setReversingTaskId] = useState(null);
+    const [expandedGroups, setExpandedGroups] = useState({});
 
-    // Search & filter state
     const [searchCustomer, setSearchCustomer] = useState('');
     const [searchTicket, setSearchTicket] = useState('');
     const [searchTailor, setSearchTailor] = useState('');
@@ -30,32 +31,33 @@ export default function PendingVerification() {
     const [dateTo, setDateTo] = useState('');
 
     useEffect(() => {
-    checkAccess();
-}, []);
+        checkAccess();
+    }, []);
 
-const checkAccess = async () => {
-    try {
-        const permissions = await db.getMyPermissions();
-        if (!permissions.includes('admin')) {
-            setAccessDenied(true);
-            setTimeout(() => {
-                if (permissions.includes('manage_qc')) router.replace('/qc');
-                else if (permissions.includes('manage_production')) router.replace('/production');
-                else if (permissions.includes('manage_completion')) router.replace('/completion');
-                else if (permissions.includes('manage_payments')) router.replace('/accounts');
-                else router.replace('/unauthorized?reason=no_access');
-            }, 2500);
-        } else {
-            setAuthorized(true);
+    const checkAccess = async () => {
+        try {
+            const permissions = await db.getMyPermissions();
+
+            if (!permissions.includes('admin')) {
+                setAccessDenied(true);
+                setTimeout(() => {
+                    if (permissions.includes('manage_qc')) router.replace('/qc');
+                    else if (permissions.includes('manage_production')) router.replace('/production');
+                    else if (permissions.includes('manage_completion')) router.replace('/completion');
+                    else if (permissions.includes('manage_payments')) router.replace('/accounts');
+                    else router.replace('/unauthorized?reason=no_access');
+                }, 2500);
+            } else {
+                setAuthorized(true);
+            }
+        } catch {
+            router.replace('/unauthorized?reason=no_access');
         }
-    } catch {
-        router.replace('/unauthorized?reason=no_access');
-    }
-};
+    };
 
-useEffect(() => {
-    if (authorized) loadTasks();
-}, [authorized]);
+    useEffect(() => {
+        if (authorized) loadTasks();
+    }, [authorized]);
 
     const loadTasks = async () => {
         setLoading(true);
@@ -80,46 +82,37 @@ useEffect(() => {
         searchCustomer || searchTicket || searchTailor || searchTask || searchCategory ||
         minAmount || maxAmount || dateFrom || dateTo;
 
-    // Derive unique task type names for the task dropdown
     const taskOptions = useMemo(() => {
-        const names = [...new Set(tasks.map(t => t.task_type_name).filter(Boolean))].sort();
-        return names;
+        return [...new Set(tasks.map(task => task.task_type_name).filter(Boolean))].sort();
     }, [tasks]);
 
-    // Derive unique category names for the category dropdown
     const categoryOptions = useMemo(() => {
-        const names = [...new Set(tasks.map(t => t.category_name).filter(Boolean))].sort();
-        return names;
+        return [...new Set(tasks.map(task => task.category_name).filter(Boolean))].sort();
     }, [tasks]);
+
+    const hasReversalRecord = (task) => Boolean(
+        task.reversal_reason ||
+        task.reversal_notes ||
+        (typeof task.notes === 'string' && task.notes.includes('Reversal:'))
+    );
 
     const filteredTasks = useMemo(() => {
         return tasks.filter(task => {
-            // Status tab filter
             if (filter === 'pending' && task.status !== 'CREATED') return false;
-            if (filter === 'approved' && task.status !== 'QC_PASSED' && task.status !== 'PAID') return false;
-            if (filter === 'rejected' && task.status !== 'QC_FAILED') return false;
+            if (filter === 'approved' && task.status !== 'Approved' && task.status !== 'PAID') return false;
+            if (filter === 'rejected' && task.status !== 'Rejected') return false;
+            if (filter === 'reversed' && !hasReversalRecord(task)) return false;
 
-            // Customer name
             if (searchCustomer && !task.customer_name?.toLowerCase().includes(searchCustomer.toLowerCase())) return false;
-
-            // Ticket number / item key
             if (searchTicket && !task.item_key?.toLowerCase().includes(searchTicket.toLowerCase())) return false;
-
-            // Tailor name
             if (searchTailor && !task.tailor_name?.toLowerCase().includes(searchTailor.toLowerCase())) return false;
-
-            // Task type (exact match from dropdown)
             if (searchTask && task.task_type_name !== searchTask) return false;
-
-            // Category (exact match from dropdown)
             if (searchCategory && task.category_name !== searchCategory) return false;
 
-            // Amount range
             const amount = parseFloat(task.pay_amount || 0);
             if (minAmount !== '' && amount < parseFloat(minAmount)) return false;
             if (maxAmount !== '' && amount > parseFloat(maxAmount)) return false;
 
-            // Date range
             if (dateFrom || dateTo) {
                 const taskDate = new Date(task.created_at);
                 if (dateFrom && taskDate < new Date(dateFrom)) return false;
@@ -134,47 +127,186 @@ useEffect(() => {
         });
     }, [tasks, filter, searchCustomer, searchTicket, searchTailor, searchTask, searchCategory, minAmount, maxAmount, dateFrom, dateTo]);
 
-    const handleApprove = async (taskId) => {
-        if (!window.confirm("Confirm payment approval for this task?")) return;
-        await db.verifyTask(taskId, 'Approved');
-        loadTasks();
+    const groupedTasks = useMemo(() => {
+        const groups = filteredTasks.reduce((acc, task) => {
+            const tailorName = task.tailor_name || 'Unassigned';
+
+            if (!acc[tailorName]) {
+                acc[tailorName] = {
+                    tailorName,
+                    tasks: [],
+                };
+            }
+
+            acc[tailorName].tasks.push(task);
+            return acc;
+        }, {});
+
+        return Object.values(groups).sort((a, b) => a.tailorName.localeCompare(b.tailorName));
+    }, [filteredTasks]);
+
+    const toggleGroup = (tailorName) => {
+        setExpandedGroups(prev => ({
+            ...prev,
+            [tailorName]: !prev[tailorName],
+        }));
     };
 
-    const handleReject = async (taskId) => {
-        const reason = window.prompt("Enter rejection reason:");
+    const handleApprove = async (task) => {
+        if (!window.confirm('Confirm payment approval for this task?')) return;
+        if (task.status === 'REVERSED') {
+            await db.reopenReversedTask(task.id);
+        }
+        await db.verifyTask(task.id, 'Approved');
+        await loadTasks();
+    };
+
+    const handleReject = async (task) => {
+        const reason = window.prompt('Enter rejection reason:');
         if (!reason) return;
-        await db.verifyTask(taskId, 'Rejected', reason);
-        loadTasks();
+        if (task.status === 'REVERSED') {
+            await db.reopenReversedTask(task.id);
+        }
+        await db.verifyTask(task.id, 'Rejected', reason);
+        await loadTasks();
     };
 
-    if (accessDenied) return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50">
-        <div className="bg-red-50 border border-red-200 rounded-xl px-6 py-5 max-w-sm w-full text-center shadow-sm">
-            <div className="text-red-500 text-3xl mb-3">⚠</div>
-            <h2 className="text-red-700 font-semibold text-lg mb-1">Access Denied</h2>
-            <p className="text-red-500 text-sm">You do not have permission to view this page. Redirecting you now...</p>
-        </div>
-    </div>
-);
+    const handleReverse = async (task) => {
+        const statusLabel = task.status === 'Rejected' ? 'rejected' : 'approved';
+        const reason = window.prompt(`Enter reversal reason for this ${statusLabel} task:`);
+        if (!reason?.trim()) return;
 
-if (!authorized) return null;
+        try {
+            setReversingTaskId(task.id);
+            await db.reverseTask(task.id, reason);
+            await loadTasks();
+        } finally {
+            setReversingTaskId(null);
+        }
+    };
+
+    const getStatusVariant = (status, isReversed) => {
+        if (isReversed && status === 'CREATED') return 'warning';
+        if (status === 'Approved' || status === 'PAID') return 'success';
+        if (status === 'Rejected') return 'danger';
+        if (status === 'REVERSED') return 'warning';
+        return 'neutral';
+    };
+
+    const getReversalNote = (task) => {
+        return task.reversal_reason || task.reversal_notes || (
+            typeof task.notes === 'string' && task.notes.includes('Reversal:')
+                ? task.notes
+                : null
+        );
+    };
+
+    const getStatusLabel = (task) => {
+        if (task.status === 'CREATED' && hasReversalRecord(task)) {
+            return 'REOPENED';
+        }
+
+        return task.status;
+    };
+
+    const renderStatusCell = (task) => {
+        if (task.status === 'CREATED' || task.status === 'REVERSED') {
+            return (
+                <div className="space-y-2">
+                    {hasReversalRecord(task) && (
+                        <>
+                            <Badge variant={getStatusVariant(task.status, true)}>
+                                {getStatusLabel(task)}
+                            </Badge>
+                            <div className="max-w-xs whitespace-normal text-xs text-amber-700">
+                                Payment reversed: {getReversalNote(task)}
+                            </div>
+                        </>
+                    )}
+                    <div className="flex gap-2">
+                        <Button
+                            size="sm"
+                            className="bg-emerald-600 text-white hover:bg-emerald-700"
+                            onClick={() => handleApprove(task)}
+                        >
+                            <Check size={16} className="mr-1" /> Approve
+                        </Button>
+                        <Button
+                            size="sm"
+                            variant="danger"
+                            onClick={() => handleReject(task)}
+                        >
+                            <XSquare size={16} className="mr-1" /> Reject
+                        </Button>
+                    </div>
+                </div>
+            );
+        }
+
+        if (task.status === 'Approved' || task.status === 'Rejected') {
+            return (
+                <div className="space-y-2">
+                    <Badge variant={getStatusVariant(task.status, hasReversalRecord(task))}>
+                        {getStatusLabel(task)}
+                    </Badge>
+                    <div>
+                        <Button
+                            size="sm"
+                            variant="secondary"
+                            isLoading={reversingTaskId === task.id}
+                            onClick={() => handleReverse(task)}
+                        >
+                            Reverse
+                        </Button>
+                    </div>
+                </div>
+            );
+        }
+
+        return (
+            <div className="space-y-2">
+                <Badge variant={getStatusVariant(task.status, hasReversalRecord(task))}>
+                    {getStatusLabel(task)}
+                </Badge>
+                {hasReversalRecord(task) && getReversalNote(task) && (
+                    <div className="max-w-xs whitespace-normal text-xs text-amber-700">
+                        Payment reversed: {getReversalNote(task)}
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    if (accessDenied) {
+        return (
+            <div className="flex min-h-screen flex-col items-center justify-center bg-gray-50">
+                <div className="w-full max-w-sm rounded-xl border border-red-200 bg-red-50 px-6 py-5 text-center shadow-sm">
+                    <div className="mb-3 text-3xl text-red-500">!</div>
+                    <h2 className="mb-1 text-lg font-semibold text-red-700">Access Denied</h2>
+                    <p className="text-sm text-red-500">You do not have permission to view this page. Redirecting you now...</p>
+                </div>
+            </div>
+        );
+    }
+
+    if (!authorized) return null;
+
     return (
         <div className="space-y-6">
-            {/* Header + status tabs */}
-            <div className="flex justify-between items-center">
+            <div className="flex items-center justify-between">
                 <div>
                     <h1 className="text-2xl font-serif text-maison-primary">Accounts Payable</h1>
                     <p className="text-sm text-maison-secondary">Approve completion and authorize payments</p>
                 </div>
 
-                <div className="flex bg-gray-100 p-1 rounded-lg">
-                    {['all', 'pending', 'approved', 'rejected'].map(tab => (
+                <div className="flex rounded-lg bg-gray-100 p-1">
+                    {['all', 'pending', 'approved', 'rejected', 'reversed'].map(tab => (
                         <button
                             key={tab}
                             onClick={() => setFilter(tab)}
-                            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
+                            className={`rounded-md px-4 py-1.5 text-sm font-medium transition-all ${
                                 filter === tab
-                                    ? 'bg-white shadow text-maison-primary'
+                                    ? 'bg-white text-maison-primary shadow'
                                     : 'text-gray-500 hover:text-gray-700'
                             }`}
                         >
@@ -184,19 +316,17 @@ if (!authorized) return null;
                 </div>
             </div>
 
-            {/* Search & Filter Bar */}
             <Card padding="p-4">
                 <div className="space-y-3">
-                    {/* Row 1: text searches */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
                         <div className="relative">
                             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                             <input
                                 type="text"
                                 placeholder="Customer name"
                                 value={searchCustomer}
-                                onChange={e => setSearchCustomer(e.target.value)}
-                                className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-maison-primary"
+                                onChange={(e) => setSearchCustomer(e.target.value)}
+                                className="w-full rounded-md border border-gray-200 py-2 pl-8 pr-3 text-sm focus:outline-none focus:ring-1 focus:ring-maison-primary"
                             />
                         </div>
 
@@ -206,8 +336,8 @@ if (!authorized) return null;
                                 type="text"
                                 placeholder="Ticket / Item key"
                                 value={searchTicket}
-                                onChange={e => setSearchTicket(e.target.value)}
-                                className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-maison-primary"
+                                onChange={(e) => setSearchTicket(e.target.value)}
+                                className="w-full rounded-md border border-gray-200 py-2 pl-8 pr-3 text-sm focus:outline-none focus:ring-1 focus:ring-maison-primary"
                             />
                         </div>
 
@@ -217,15 +347,15 @@ if (!authorized) return null;
                                 type="text"
                                 placeholder="Tailor name"
                                 value={searchTailor}
-                                onChange={e => setSearchTailor(e.target.value)}
-                                className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-maison-primary"
+                                onChange={(e) => setSearchTailor(e.target.value)}
+                                className="w-full rounded-md border border-gray-200 py-2 pl-8 pr-3 text-sm focus:outline-none focus:ring-1 focus:ring-maison-primary"
                             />
                         </div>
 
                         <select
                             value={searchTask}
-                            onChange={e => setSearchTask(e.target.value)}
-                            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-maison-primary text-gray-700"
+                            onChange={(e) => setSearchTask(e.target.value)}
+                            className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-maison-primary"
                         >
                             <option value="">All tasks</option>
                             {taskOptions.map(name => (
@@ -235,8 +365,8 @@ if (!authorized) return null;
 
                         <select
                             value={searchCategory}
-                            onChange={e => setSearchCategory(e.target.value)}
-                            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-maison-primary text-gray-700"
+                            onChange={(e) => setSearchCategory(e.target.value)}
+                            className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-maison-primary"
                         >
                             <option value="">All categories</option>
                             {categoryOptions.map(name => (
@@ -245,48 +375,47 @@ if (!authorized) return null;
                         </select>
                     </div>
 
-                    {/* Row 2: amount + date + clear */}
-                    <div className="flex flex-wrap gap-3 items-center">
+                    <div className="flex flex-wrap items-center gap-3">
                         <div className="flex items-center gap-2">
-                            <span className="text-xs text-gray-500 whitespace-nowrap">Amount (₦)</span>
+                            <span className="whitespace-nowrap text-xs text-gray-500">Amount (NGN)</span>
                             <input
                                 type="number"
                                 placeholder="Min"
                                 value={minAmount}
-                                onChange={e => setMinAmount(e.target.value)}
-                                className="w-24 px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-maison-primary"
+                                onChange={(e) => setMinAmount(e.target.value)}
+                                className="w-24 rounded-md border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-maison-primary"
                             />
-                            <span className="text-xs text-gray-400">—</span>
+                            <span className="text-xs text-gray-400">-</span>
                             <input
                                 type="number"
                                 placeholder="Max"
                                 value={maxAmount}
-                                onChange={e => setMaxAmount(e.target.value)}
-                                className="w-24 px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-maison-primary"
+                                onChange={(e) => setMaxAmount(e.target.value)}
+                                className="w-24 rounded-md border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-maison-primary"
                             />
                         </div>
 
                         <div className="flex items-center gap-2">
-                            <span className="text-xs text-gray-500 whitespace-nowrap">Date</span>
+                            <span className="whitespace-nowrap text-xs text-gray-500">Date</span>
                             <input
                                 type="date"
                                 value={dateFrom}
-                                onChange={e => setDateFrom(e.target.value)}
-                                className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-maison-primary"
+                                onChange={(e) => setDateFrom(e.target.value)}
+                                className="rounded-md border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-maison-primary"
                             />
-                            <span className="text-xs text-gray-400">—</span>
+                            <span className="text-xs text-gray-400">-</span>
                             <input
                                 type="date"
                                 value={dateTo}
-                                onChange={e => setDateTo(e.target.value)}
-                                className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-maison-primary"
+                                onChange={(e) => setDateTo(e.target.value)}
+                                className="rounded-md border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-maison-primary"
                             />
                         </div>
 
                         {hasActiveSearch && (
                             <button
                                 onClick={clearSearch}
-                                className="flex items-center gap-1 px-3 py-2 text-sm text-gray-500 hover:text-gray-700 border border-gray-200 rounded-md hover:bg-gray-50 transition-all"
+                                className="flex items-center gap-1 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-500 transition-all hover:bg-gray-50 hover:text-gray-700"
                             >
                                 <X size={14} />
                                 Clear
@@ -300,59 +429,88 @@ if (!authorized) return null;
                 </div>
             </Card>
 
-            {/* Table */}
-            <Card padding="p-0">
-                <Table headers={['Date', 'Item Key', 'Customer', 'Task', 'Tailor', 'Payable', 'Status / Action']}>
-                    {filteredTasks.map((task) => (
-                        <TableRow key={task.id}>
-                            <TableCell className="text-gray-500">
-                                {format(new Date(task.created_at), 'MMM d, HH:mm')}
-                            </TableCell>
-                            <TableCell className="font-mono text-xs">{task.item_key}</TableCell>
-                            <TableCell>{task.customer_name}</TableCell>
-                            <TableCell>
-                                <div className="font-medium">{task.task_type_name}</div>
-                                <div className="text-xs text-gray-500">{task.category_name}</div>
-                            </TableCell>
-                            <TableCell>{task.tailor_name}</TableCell>
-                            <TableCell className="font-medium">
-                                ₦{parseFloat(task.pay_amount || 0).toFixed(2)}
-                            </TableCell>
-                            <TableCell>
-                                {task.status === 'CREATED' ? (
-                                    <div className="flex gap-2">
-                                        <Button
-                                            size="sm"
-                                            className="bg-emerald-600 hover:bg-emerald-700 text-white"
-                                            onClick={() => handleApprove(task.id)}
-                                        >
-                                            <Check size={16} className="mr-1" /> Approve
-                                        </Button>
-                                        <Button
-                                            size="sm"
-                                            variant="danger"
-                                            onClick={() => handleReject(task.id)}
-                                        >
-                                            <XSquare size={16} className="mr-1" /> Reject
-                                        </Button>
+            <div className="space-y-4">
+                {groupedTasks.map((group) => {
+                    const isExpanded = expandedGroups[group.tailorName] ?? true;
+                    const decidedCount = group.tasks.filter(task =>
+                        task.status === 'Approved' || task.status === 'Rejected' || task.status === 'PAID'
+                    ).length;
+                    const amendmentCount = group.tasks.filter(task => task.category_name === 'Amendment').length;
+                    const sewingCount = group.tasks.filter(task => task.category_name === 'Sewing').length;
+                    const cuttingCount = group.tasks.filter(task => task.category_name === 'Cutting').length;
+                    const totalPayable = group.tasks.reduce((sum, task) => sum + parseFloat(task.pay_amount || 0), 0);
+
+                    return (
+                        <Card key={group.tailorName} padding="p-0" className="overflow-hidden">
+                            <button
+                                onClick={() => toggleGroup(group.tailorName)}
+                                className="flex w-full items-center justify-between px-5 py-4 text-left transition-colors hover:bg-gray-50"
+                            >
+                                <div className="flex items-center gap-3">
+                                    <div className="text-gray-400">
+                                        {isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
                                     </div>
-                                ) : (
-                                    <Badge variant={task.status === 'QC_PASSED' || task.status === 'PAID' ? 'success' : 'danger'}>
-                                        {task.status}
+                                    <div className="flex items-center gap-4">
+                                        <h3 className="font-serif text-lg font-medium text-maison-primary">
+                                            {group.tailorName}
+                                        </h3>
+                                        <p className="text-sm text-maison-secondary">
+                                            {group.tasks.length} payment{group.tasks.length !== 1 ? 's' : ''} assigned
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div className="flex items-center gap-4">
+                                    <div className="hidden flex-1 items-center justify-center gap-6 text-sm text-maison-secondary xl:flex">
+                                        <span>Amendment: {amendmentCount}</span>
+                                        <span>Sewing: {sewingCount}</span>
+                                        <span>Cutting: {cuttingCount}</span>
+                                    </div>
+                                    <span className="hidden text-sm font-medium text-maison-primary lg:inline">
+                                        NGN {totalPayable.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                    <Badge variant={decidedCount === group.tasks.length && group.tasks.length > 0 ? 'success' : 'neutral'}>
+                                        {decidedCount} / {group.tasks.length} Decided
                                     </Badge>
-                                )}
-                            </TableCell>
-                        </TableRow>
-                    ))}
-                    {filteredTasks.length === 0 && !loading && (
-                        <tr>
-                            <td colSpan="7" className="px-6 py-8 text-center text-gray-500 text-sm">
-                                {hasActiveSearch ? 'No results match your search.' : 'No tasks found matching the selected filter.'}
-                            </td>
-                        </tr>
-                    )}
-                </Table>
-            </Card>
+                                </div>
+                            </button>
+
+                            {isExpanded && (
+                                <div className="bg-white">
+                                    <Table headers={['Date', 'Item Key', 'Customer', 'Task', 'Tailor', 'Payable', 'Status / Action']}>
+                                        {group.tasks.map((task) => (
+                                            <TableRow key={task.id}>
+                                                <TableCell className="text-gray-500">
+                                                    {format(new Date(task.created_at), 'MMM d, HH:mm')}
+                                                </TableCell>
+                                                <TableCell className="font-mono text-xs">{task.item_key}</TableCell>
+                                                <TableCell>{task.customer_name}</TableCell>
+                                                <TableCell>
+                                                    <div className="font-medium">{task.task_type_name}</div>
+                                                    <div className="text-xs text-gray-500">{task.category_name}</div>
+                                                </TableCell>
+                                                <TableCell>{task.tailor_name || 'Unassigned'}</TableCell>
+                                                <TableCell className="font-medium">
+                                                    NGN {parseFloat(task.pay_amount || 0).toFixed(2)}
+                                                </TableCell>
+                                                <TableCell>{renderStatusCell(task)}</TableCell>
+                                            </TableRow>
+                                        ))}
+                                    </Table>
+                                </div>
+                            )}
+                        </Card>
+                    );
+                })}
+
+                {filteredTasks.length === 0 && !loading && (
+                    <Card>
+                        <div className="px-6 py-8 text-center text-sm text-gray-500">
+                            {hasActiveSearch ? 'No results match your search.' : 'No tasks found matching the selected filter.'}
+                        </div>
+                    </Card>
+                )}
+            </div>
         </div>
     );
 }

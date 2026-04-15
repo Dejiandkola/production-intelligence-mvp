@@ -140,6 +140,39 @@ function requirePermission(ctx, perm) {
     }
 }
 
+function normalizeAssignmentStatus(status) {
+    if (status === 'QC_PASSED') return 'Approved'
+    if (status === 'QC_FAILED') return 'Rejected'
+    return status
+}
+
+function normalizeItemStatus(status) {
+    if (status === 'COMPLETED') return 'OUT_OF_PRODUCTION'
+    if (status === 'IN_QC') return 'IN_PRODUCTION'
+    return status
+}
+
+function getReceivingStatus(item) {
+    return item?.is_received ? 'Received' : 'Not Received'
+}
+
+function isApprovedStatus(status) {
+    return status === 'Approved' || status === 'QC_PASSED' || status === 'PAID'
+}
+
+function isRejectedStatus(status) {
+    return status === 'Rejected' || status === 'QC_FAILED'
+}
+
+function toDateBoundary(value, boundary) {
+    if (!value) return null
+
+    const raw = String(value)
+    const day = raw.includes('T') ? raw.split('T')[0] : raw
+
+    return boundary === 'start' ? `${day}T00:00:00.000` : `${day}T23:59:59.999`
+}
+
 export const db = {
 
     async getCurrentUser() {
@@ -1131,7 +1164,15 @@ export const db = {
                 *,
                 tickets(ticket_number, customer_name),
                 product_types(name),
-                work_assignments(category_types(name))
+                work_assignments(
+                    id,
+                    category_type_id,
+                    task_type_id,
+                    tailor_id,
+                    category_types(name),
+                    task_types(name),
+                    tailors(name, active, band)
+                )
             `)
             .eq('organization_id', ctx.organizationId)
             .order('created_at', { ascending: false })
@@ -1144,6 +1185,9 @@ export const db = {
         // Map foreign relations to expected UI names
         return data.map(item => ({
             ...item,
+            raw_status: item.status,
+            status: normalizeItemStatus(item.status),
+            receiving_status: getReceivingStatus(item),
             ticket_number: item.tickets?.ticket_number,
             customer_name: item.tickets?.customer_name,
             product_type_name: item.product_types?.name
@@ -1181,6 +1225,9 @@ export const db = {
 
         return {
             ...data,
+            raw_status: data.status,
+            status: normalizeItemStatus(data.status),
+            receiving_status: getReceivingStatus(data),
             ticket_number: data.tickets?.ticket_number,
             customer_name: data.tickets?.customer_name,
             product_type_name: data.product_types?.name
@@ -1209,6 +1256,8 @@ export const db = {
 
         return data.map(task => ({
             ...task,
+            raw_status: task.status,
+            status: normalizeAssignmentStatus(task.status),
             task_type_name: task.task_types?.name,
             tailor_name: task.tailors?.name,
             category_name: task.category_types?.name
@@ -1354,11 +1403,14 @@ async updateTicket(id, { customer_name }) {
             .eq('organization_id', ctx.organizationId)
             .eq('status', 'QC_PASSED')
 
-        if (startDate) {
-            query = query.gte('updated_at', `${startDate}T00:00:00`)
+        const rangeStart = toDateBoundary(startDate, 'start')
+        const rangeEnd = toDateBoundary(endDate, 'end')
+
+        if (rangeStart) {
+            query = query.gte('updated_at', rangeStart)
         }
-        if (endDate) {
-            query = query.lte('updated_at', `${endDate}T23:59:59`)
+        if (rangeEnd) {
+            query = query.lte('updated_at', rangeEnd)
         }
 
         const { data, error } = await query
@@ -1424,8 +1476,6 @@ async updateTicket(id, { customer_name }) {
             throw new Error(error.message || 'Failed to create work assignment.');
         }
 
-        await this.updateItemStatus(payload.item_id, 'IN_QC');
-
         return data;
     },
 
@@ -1448,7 +1498,7 @@ async updateTicket(id, { customer_name }) {
             throw new Error(fetchErr.message)
         }
 
-        if (assignment.status === 'QC_PASSED' || assignment.status === 'PAID' || assignment.status === 'REVERSED') {
+        if (isApprovedStatus(assignment.status) || assignment.status === 'REVERSED') {
             throw new Error("Cannot delete this task because it has already progressed beyond assignment.")
         }
 
@@ -1505,7 +1555,7 @@ async updateTicket(id, { customer_name }) {
             throw new Error(fetchErr.message);
         }
 
-        if (assignment.status === 'QC_PASSED' || assignment.status === 'PAID' || assignment.status === 'REVERSED') {
+        if (isApprovedStatus(assignment.status) || assignment.status === 'REVERSED') {
             throw new Error("Cannot edit this task because it has already progressed beyond assignment.");
         }
 
@@ -1568,6 +1618,8 @@ async updateTicket(id, { customer_name }) {
 
         return data.map(task => ({
             ...task,
+            raw_status: task.status,
+            status: normalizeAssignmentStatus(task.status),
             task_name: task.task_types?.name,
             task_type_name: task.task_types?.name,
             tailor_name: task.tailors?.name,
@@ -1600,13 +1652,106 @@ async updateTicket(id, { customer_name }) {
             throw new Error(error.message)
         }
 
-        return { id: taskId, status }
+        return { id: taskId, status: normalizeAssignmentStatus(status) }
+    },
+
+    async reverseTask(taskId, reason) {
+        const ctx = await getContext()
+
+        if (!ctx.permissions.includes('manage_payments') && !ctx.permissions.includes('admin')) {
+            throw new PermissionDeniedError('Requires manage_payments or admin permission')
+        }
+
+        const trimmedReason = reason?.trim()
+
+        if (!trimmedReason) {
+            throw new Error('Reversal reason is required.')
+        }
+
+        const { data: assignment, error: fetchError } = await supabase
+            .from('work_assignments')
+            .select('*')
+            .eq('id', taskId)
+            .eq('organization_id', ctx.organizationId)
+            .single()
+
+        if (fetchError) {
+            console.error(fetchError)
+            throw new Error(fetchError.message)
+        }
+
+        if (!isApprovedStatus(assignment.status) && !isRejectedStatus(assignment.status)) {
+            throw new Error(`Only approved or rejected tasks can be reversed. Current status: ${assignment.status}`)
+        }
+
+        const updatePayload = { status: 'CREATED' }
+
+        if ('reversal_reason' in assignment) {
+            updatePayload.reversal_reason = trimmedReason
+        } else if ('reversal_notes' in assignment) {
+            updatePayload.reversal_notes = trimmedReason
+        } else if ('notes' in assignment) {
+            const existingNotes = typeof assignment.notes === 'string' ? assignment.notes.trim() : ''
+            updatePayload.notes = existingNotes
+                ? `${existingNotes}\nReversal: ${trimmedReason}`
+                : `Reversal: ${trimmedReason}`
+        }
+
+        const { error: updateError } = await supabase
+            .from('work_assignments')
+            .update(updatePayload)
+            .eq('id', taskId)
+            .eq('organization_id', ctx.organizationId)
+
+        if (updateError) {
+            console.error(updateError)
+            throw new Error(updateError.message)
+        }
+
+        return { id: taskId, status: 'CREATED', reason: trimmedReason, reversed: true }
+    },
+
+    async reopenReversedTask(taskId) {
+        const ctx = await getContext()
+
+        if (!ctx.permissions.includes('manage_payments') && !ctx.permissions.includes('admin')) {
+            throw new PermissionDeniedError('Requires manage_payments or admin permission')
+        }
+
+        const { data: assignment, error: fetchError } = await supabase
+            .from('work_assignments')
+            .select('id, status')
+            .eq('id', taskId)
+            .eq('organization_id', ctx.organizationId)
+            .single()
+
+        if (fetchError) {
+            console.error(fetchError)
+            throw new Error(fetchError.message)
+        }
+
+        if (assignment.status !== 'REVERSED') {
+            return { id: taskId, status: assignment.status }
+        }
+
+        const { error: updateError } = await supabase
+            .from('work_assignments')
+            .update({ status: 'CREATED' })
+            .eq('id', taskId)
+            .eq('organization_id', ctx.organizationId)
+
+        if (updateError) {
+            console.error(updateError)
+            throw new Error(updateError.message)
+        }
+
+        return { id: taskId, status: 'CREATED', reopened: true }
     },
 
     async updateItemStatus(itemId, status) {
     const ctx = await getContext()
-    if (!ctx.permissions?.includes('manage_completion') && !ctx.permissions?.includes('manage_qc')) {
-        throw new Error('Permission denied: manage_completion or manage_qc required')
+    if (!ctx.permissions?.includes('manage_qc') && !ctx.permissions?.includes('manage_production')) {
+        throw new Error('Permission denied: manage_qc or manage_production required')
     }
 
         const { data, error } = await supabase
@@ -1628,5 +1773,38 @@ async updateTicket(id, { customer_name }) {
         }
 
         return data[0]
+    },
+
+    async updateItemReceivingStatus(itemId, isReceived) {
+        const ctx = await getContext()
+        if (!ctx.permissions?.includes('manage_completion')) {
+            throw new Error('Permission denied: manage_completion required')
+        }
+
+        const { data, error } = await supabase
+            .from('items')
+            .update({
+                is_received: isReceived,
+                received_at: isReceived ? new Date().toISOString() : null
+            })
+            .eq('id', itemId)
+            .eq('organization_id', ctx.organizationId)
+            .select()
+
+        if (error) {
+            console.error("Receive update error:", error)
+            throw new Error(error.message)
+        }
+
+        if (!data || data.length === 0) {
+            throw new Error("Receive update failed: no rows affected")
+        }
+
+        return {
+            ...data[0],
+            raw_status: data[0].status,
+            status: normalizeItemStatus(data[0].status),
+            receiving_status: getReceivingStatus(data[0])
+        }
     }
 }

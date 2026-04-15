@@ -1,34 +1,60 @@
 // @ts-nocheck
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { endOfWeek, isWithinInterval, startOfWeek } from 'date-fns';
+import { CheckCircle2, Shirt, ShoppingBag } from 'lucide-react';
 import { db } from '@/services/db';
 import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
 import { Badge } from '@/components/UI/Table';
-import { Shirt, Scissors, ShoppingBag, CheckCircle2 } from 'lucide-react';
-import { useRouter } from 'next/navigation';
-import { startOfWeek, endOfWeek, parseISO, isWithinInterval } from 'date-fns';
+
+function toInputDate(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function formatDelta(change) {
+    if (change === null || change === undefined) return 'NEW';
+    if (change === 0) return '0%';
+    return `${change > 0 ? '+' : ''}${change}%`;
+}
+
+function getDeltaClass(change) {
+    if (change === null || change === undefined) return 'text-sky-600';
+    if (change > 0) return 'text-emerald-600';
+    if (change < 0) return 'text-red-600';
+    return 'text-gray-500';
+}
+
+function formatValueDelta(value) {
+    if (value === null || value === undefined) return 'NEW';
+    const formatted = Math.abs(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (value === 0) return `NGN 0.00`;
+    return `${value > 0 ? '+' : '-'}NGN ${formatted}`;
+}
 
 export default function Dashboard() {
     const router = useRouter();
-    const [loading, setLoading] = useState(true);
     const [authorized, setAuthorized] = useState(false);
     const [accessDenied, setAccessDenied] = useState(false);
     const [stats, setStats] = useState({
-        activeItems: 0,
         totalRevenue: 0,
+        totalRevenueChange: 0,
         productionCount: 0,
+        archivedCount: 0,
         completedCount: 0,
-        pendingVerification: 0
     });
     const [weeklyPayroll, setWeeklyPayroll] = useState([]);
     const [topProducts, setTopProducts] = useState([]);
+    const [categoryBreakdown, setCategoryBreakdown] = useState([]);
 
-    // Default to current week
     const [dateRange, setDateRange] = useState({
-        start: startOfWeek(new Date(), { weekStartsOn: 1 }).toISOString().split('T')[0],
-        end: endOfWeek(new Date(), { weekStartsOn: 1 }).toISOString().split('T')[0]
+        start: toInputDate(startOfWeek(new Date(), { weekStartsOn: 1 })),
+        end: toInputDate(endOfWeek(new Date(), { weekStartsOn: 1 })),
     });
 
     useEffect(() => {
@@ -37,39 +63,41 @@ export default function Dashboard() {
 
     useEffect(() => {
         if (authorized) loadStats();
-    }, [dateRange, authorized]);
+    }, [authorized, dateRange]);
 
-   const checkAccess = async () => {
-    try {
-        const permissions = await db.getMyPermissions();
-        if (!permissions.includes('admin')) {
-            setAccessDenied(true);
-            setTimeout(() => {
-                if (permissions.includes('manage_qc')) router.replace('/qc');
-                else if (permissions.includes('manage_production')) router.replace('/production');
-                else if (permissions.includes('manage_completion')) router.replace('/completion');
-                else if (permissions.includes('manage_payments')) router.replace('/accounts');
-                else router.replace('/unauthorized?reason=no_access');
-            }, 2500);
-        } else {
-            setAuthorized(true);
+    const checkAccess = async () => {
+        try {
+            const permissions = await db.getMyPermissions();
+            if (!permissions.includes('admin')) {
+                setAccessDenied(true);
+                setTimeout(() => {
+                    if (permissions.includes('manage_qc')) router.replace('/qc');
+                    else if (permissions.includes('manage_production')) router.replace('/production');
+                    else if (permissions.includes('manage_completion')) router.replace('/completion');
+                    else if (permissions.includes('manage_payments')) router.replace('/accounts');
+                    else router.replace('/unauthorized?reason=no_access');
+                }, 2500);
+            } else {
+                setAuthorized(true);
+            }
+        } catch {
+            router.replace('/unauthorized?reason=no_access');
         }
-    } catch {
-        router.replace('/unauthorized?reason=no_access');
-    }
-};
+    };
 
     const loadStats = async () => {
-        setLoading(true);
         const startDate = new Date(dateRange.start);
         startDate.setHours(0, 0, 0, 0);
         const endDate = new Date(dateRange.end);
         endDate.setHours(23, 59, 59, 999);
+        const periodLengthMs = endDate.getTime() - startDate.getTime() + 1;
+        const previousEndDate = new Date(startDate.getTime() - 1);
+        const previousStartDate = new Date(previousEndDate.getTime() - periodLengthMs + 1);
 
         const [allItems, allTasks, payroll] = await Promise.all([
             db.getItems(),
             db.getTasks(),
-            db.getWeeklyPayroll(startDate.toISOString(), endDate.toISOString())
+            db.getWeeklyPayroll(dateRange.start, dateRange.end),
         ]);
 
         const items = allItems.filter(item => {
@@ -77,255 +105,303 @@ export default function Dashboard() {
             return isWithinInterval(date, { start: startDate, end: endDate });
         });
 
-        const tasks = allTasks.filter(task => { // Usually based on completion date, but created_at for MVP
-            const date = new Date(task.created_at);
+        const tasks = allTasks.filter(task => {
+            const date = new Date(task.updated_at || task.created_at);
             return isWithinInterval(date, { start: startDate, end: endDate });
         });
 
-        // 1. Active Items (Not Received, Not Cancelled)
-        const activeItems = items.filter(i => i.status !== 'COMPLETED' && i.status !== 'CANCELLED').length;
-
-        // 2. Approved Pay (Revenue/Cost context) - Sum of approved tailor pay
-        const verifiedTasks = tasks.filter(t => t.status === 'QC_PASSED' || t.status === 'PAID');
-        const totalRevenue = verifiedTasks.reduce((sum, t) => sum + (Number(t.pay_amount) || 0), 0);
-
-        // 3. Status Breakdown
-        const productionCount = items.filter(i => i.status === 'IN_PRODUCTION').length;
-        const completedCount = items.filter(i => i.status === 'COMPLETED').length;
-
-        // 4. Pending Tasks
-        const pendingVerification = tasks.filter(t => t.status === 'CREATED').length;
-
-        // 5. Top Product Types Logic
-        const productStats = {};
-        items.forEach(item => {
-            if (item.status === 'CANCELLED') return;
-            if (!productStats[item.product_type_name]) {
-                productStats[item.product_type_name] = { produced: 0, backlog: 0 };
-            }
-            if (item.status === 'COMPLETED') {
-                productStats[item.product_type_name].produced++;
-            } else {
-                productStats[item.product_type_name].backlog++;
-            }
+        const previousTasks = allTasks.filter(task => {
+            const date = new Date(task.updated_at || task.created_at);
+            return isWithinInterval(date, { start: previousStartDate, end: previousEndDate });
         });
 
-        const sortedTopProducts = Object.entries(productStats)
-            .map(([name, counts]) => ({ name, ...counts, total: counts.produced + counts.backlog }))
-            .sort((a, b) => b.total - a.total)
-            .slice(0, 5); // top 5
+        const verifiedTasks = tasks.filter(task => task.status === 'Approved' || task.status === 'PAID');
+        const totalRevenue = verifiedTasks.reduce((sum, task) => sum + (Number(task.pay_amount) || 0), 0);
+        const previousVerifiedTasks = previousTasks.filter(task => task.status === 'Approved' || task.status === 'PAID');
+        const previousTotalRevenue = previousVerifiedTasks.reduce((sum, task) => sum + (Number(task.pay_amount) || 0), 0);
+        const totalRevenueChange = previousTotalRevenue === 0 ? (totalRevenue > 0 ? null : 0) : totalRevenue - previousTotalRevenue;
+
+        const previousItems = allItems.filter(item => {
+            const date = new Date(item.created_at);
+            return isWithinInterval(date, { start: previousStartDate, end: previousEndDate });
+        });
+
+        const buildProductStats = (sourceItems) => {
+            const productStats = {};
+
+            sourceItems.forEach(item => {
+                if (item.status === 'CANCELLED' || item.status === 'ARCHIVED') return;
+                if (!productStats[item.product_type_name]) {
+                    productStats[item.product_type_name] = { produced: 0, backlog: 0 };
+                }
+                if (item.status === 'OUT_OF_PRODUCTION') {
+                    productStats[item.product_type_name].produced++;
+                } else {
+                    productStats[item.product_type_name].backlog++;
+                }
+            });
+
+            return productStats;
+        };
+
+        const currentProductStats = buildProductStats(items);
+        const previousProductStats = buildProductStats(previousItems);
+        const productNames = [...new Set([
+            ...Object.keys(currentProductStats),
+            ...Object.keys(previousProductStats),
+        ])];
+
+        const rankedTopProducts = productNames
+            .map((name) => {
+                const currentCounts = currentProductStats[name] || { produced: 0, backlog: 0 };
+                const previousCounts = previousProductStats[name] || { produced: 0, backlog: 0 };
+                const total = currentCounts.produced + currentCounts.backlog;
+                const previousTotal = previousCounts.produced + previousCounts.backlog;
+                const delta = previousTotal === 0
+                    ? (total > 0 ? null : 0)
+                    : Math.round(((total - previousTotal) / previousTotal) * 100);
+
+                return {
+                    name,
+                    produced: currentCounts.produced,
+                    backlog: currentCounts.backlog,
+                    total,
+                    delta,
+                    previousTotal,
+                };
+            })
+            .filter(product => product.total > 0 || product.previousTotal > 0)
+            .sort((a, b) => b.total - a.total || b.produced - a.produced || a.name.localeCompare(b.name));
+
+        const preferredCategoryOrder = ['Amendment', 'Cutting', 'Sewing', 'Laundry', 'Embroidery'];
+        const categoryCounts = tasks.reduce((acc, task) => {
+            const categoryName = task.category_name;
+            if (!categoryName) return acc;
+            acc[categoryName] = (acc[categoryName] || 0) + 1;
+            return acc;
+        }, {});
+
+        const orderedCategoryBreakdown = [
+            ...preferredCategoryOrder
+                .filter(name => Object.prototype.hasOwnProperty.call(categoryCounts, name))
+                .map(name => ({ name, count: categoryCounts[name] })),
+            ...Object.entries(categoryCounts)
+                .filter(([name]) => !preferredCategoryOrder.includes(name))
+                .sort((a, b) => a[0].localeCompare(b[0]))
+                .map(([name, count]) => ({ name, count })),
+        ];
 
         setStats({
-            activeItems,
             totalRevenue,
-            productionCount,
-            completedCount,
-            pendingVerification
+            totalRevenueChange,
+            productionCount: items.filter(item => item.status === 'IN_PRODUCTION').length,
+            archivedCount: items.filter(item => item.status === 'ARCHIVED').length,
+            completedCount: items.filter(item => item.status === 'OUT_OF_PRODUCTION').length,
         });
-        setTopProducts(sortedTopProducts);
+        setTopProducts(rankedTopProducts);
+        setCategoryBreakdown(orderedCategoryBreakdown);
         setWeeklyPayroll(payroll);
-        setLoading(false);
     };
 
-     if (accessDenied) return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50">
-        <div className="bg-red-50 border border-red-200 rounded-xl px-6 py-5 max-w-sm w-full text-center shadow-sm">
-            <div className="text-red-500 text-3xl mb-3">⚠</div>
-            <h2 className="text-red-700 font-semibold text-lg mb-1">Access Denied</h2>
-            <p className="text-red-500 text-sm">You do not have permission to view this page. Redirecting you now...</p>
-        </div>
-    </div>
-);
+    if (accessDenied) {
+        return (
+            <div className="flex min-h-screen flex-col items-center justify-center bg-gray-50">
+                <div className="w-full max-w-sm rounded-xl border border-red-200 bg-red-50 px-6 py-5 text-center shadow-sm">
+                    <div className="mb-3 text-3xl text-red-500">!</div>
+                    <h2 className="mb-1 text-lg font-semibold text-red-700">Access Denied</h2>
+                    <p className="text-sm text-red-500">You do not have permission to view this page. Redirecting you now...</p>
+                </div>
+            </div>
+        );
+    }
 
-if (!authorized) return null;
+    if (!authorized) return null;
+
     return (
         <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+            <div className="flex flex-col items-start justify-between gap-4 rounded-xl border border-gray-100 bg-white p-4 shadow-sm sm:flex-row sm:items-center">
                 <div>
                     <h1 className="text-2xl font-serif text-maison-primary">Production Analytics</h1>
                     <p className="text-sm text-gray-500">Monitor performance and pipeline metrics.</p>
                 </div>
                 <div className="flex items-center gap-3">
                     <div className="flex flex-col">
-                        <label className="text-xs text-gray-500 mb-1">Start Date</label>
+                        <label className="mb-1 text-xs text-gray-500">Start Date</label>
                         <input
                             type="date"
                             value={dateRange.start}
                             onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
-                            className="text-sm border border-gray-200 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-maison-primary/20"
+                            className="rounded-md border border-gray-200 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-maison-primary/20"
                         />
                     </div>
-                    <span className="text-gray-400 mt-5">-</span>
+                    <span className="mt-5 text-gray-400">-</span>
                     <div className="flex flex-col">
-                        <label className="text-xs text-gray-500 mb-1">End Date</label>
+                        <label className="mb-1 text-xs text-gray-500">End Date</label>
                         <input
                             type="date"
                             value={dateRange.end}
                             onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
-                            className="text-sm border border-gray-200 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-maison-primary/20"
+                            className="rounded-md border border-gray-200 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-maison-primary/20"
                         />
                     </div>
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                {/* Active Items */}
-                <Card className="relative overflow-hidden cursor-pointer hover:shadow-md transition-shadow" onClick={() => router.push('/production')}>
-                    <div className="flex justify-between items-start mb-4">
-                        <div className="p-2 bg-gray-50 rounded-md text-maison-secondary">
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+                <Card className="relative cursor-pointer overflow-hidden transition-shadow hover:shadow-md" onClick={() => router.push('/production')}>
+                    <div className="mb-4 flex items-start justify-between">
+                        <div className="rounded-md bg-gray-50 p-2 text-maison-secondary">
                             <Shirt size={20} />
                         </div>
-                        <span className="text-gray-300">•••</span>
+                        <span className="text-gray-300">...</span>
                     </div>
-                    <p className="text-sm font-medium text-gray-500">Active Items</p>
-                    <div className="flex items-end gap-3 mt-1">
-                        <h3 className="text-3xl font-serif text-maison-primary">{stats.activeItems}</h3>
+                    <p className="text-sm font-medium text-gray-500">Backlog</p>
+                    <div className="mt-1 flex items-end gap-3">
+                        <h3 className="text-3xl font-serif text-maison-primary">{stats.productionCount}</h3>
                     </div>
-                    <p className="text-xs text-gray-400 mt-2">In pipeline</p>
+                    <p className="mt-2 text-xs text-gray-400">Currently active</p>
                 </Card>
 
-                {/* Pending Verification */}
-                <Card className="relative overflow-hidden cursor-pointer hover:shadow-md transition-shadow" onClick={() => router.push('/accounts')}>
-                    <div className="flex justify-between items-start mb-4">
-                        <div className="p-2 bg-gray-50 rounded-md text-maison-secondary">
+                <Card className="relative cursor-pointer overflow-hidden transition-shadow hover:shadow-md" onClick={() => router.push('/production')}>
+                    <div className="mb-4 flex items-start justify-between">
+                        <div className="rounded-md bg-gray-50 p-2 text-maison-secondary">
                             <ShoppingBag size={20} />
                         </div>
-                        {stats.pendingVerification > 0 && <span className="absolute top-6 right-6 flex h-3 w-3"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500"></span></span>}
                     </div>
-                    <p className="text-sm font-medium text-gray-500">Pending Pay</p>
-                    <div className="flex items-end gap-3 mt-1">
-                        <h3 className="text-3xl font-serif text-maison-primary">{stats.pendingVerification}</h3>
+                    <p className="text-sm font-medium text-gray-500">Archived</p>
+                    <div className="mt-1 flex items-end gap-3">
+                        <h3 className="text-3xl font-serif text-maison-primary">{stats.archivedCount}</h3>
                     </div>
-                    <p className="text-xs text-gray-400 mt-2">Tasks waiting approval</p>
+                    <p className="mt-2 text-xs text-gray-400">No longer in backlog</p>
                 </Card>
 
-                {/* Completed */}
-                <Card className="relative overflow-hidden cursor-pointer hover:shadow-md transition-shadow" onClick={() => router.push('/completion')}>
-                    <div className="flex justify-between items-start mb-4">
-                        <div className="p-2 bg-gray-50 rounded-md text-maison-secondary">
+                <Card className="relative cursor-pointer overflow-hidden transition-shadow hover:shadow-md" onClick={() => router.push('/production')}>
+                    <div className="mb-4 flex items-start justify-between">
+                        <div className="rounded-md bg-gray-50 p-2 text-maison-secondary">
                             <CheckCircle2 size={20} />
                         </div>
                     </div>
-                    <p className="text-sm font-medium text-gray-500">Completed</p>
-                    <div className="flex items-end gap-3 mt-1">
+                    <p className="text-sm font-medium text-gray-500">Produced</p>
+                    <div className="mt-1 flex items-end gap-3">
                         <h3 className="text-3xl font-serif text-maison-primary">{stats.completedCount}</h3>
                     </div>
-                    <p className="text-xs text-gray-400 mt-2">Items received</p>
+                    <p className="mt-2 text-xs text-gray-400">Out of production</p>
                 </Card>
 
-                {/* Total Cost/Revenue involved */}
                 <Card className="relative overflow-hidden">
-                    <div className="flex justify-between items-start mb-4">
-                        <div className="p-2 bg-gray-50 rounded-md text-maison-secondary">
-                            <span className="font-serif font-bold text-lg leading-none">₦</span>
+                    <div className="mb-4 flex items-start justify-between">
+                        <div className="rounded-md bg-gray-50 p-2 text-maison-secondary">
+                            <span className="font-serif text-lg font-bold leading-none">N</span>
                         </div>
                     </div>
                     <p className="text-sm font-medium text-gray-500">Tailor Pay</p>
-                    <div className="flex items-end gap-3 mt-1">
-                        <h3 className="text-3xl font-serif text-maison-primary">₦{stats.totalRevenue.toLocaleString()}</h3>
+                    <div className="mt-1 flex items-end gap-3">
+                        <h3 className="text-3xl font-serif text-maison-primary">NGN {stats.totalRevenue.toLocaleString()}</h3>
                     </div>
-                    <p className="text-xs text-gray-400 mt-2">Approved to date</p>
+                    <p className={`mt-2 text-xs ${getDeltaClass(stats.totalRevenueChange)}`}>
+                        {formatValueDelta(stats.totalRevenueChange)} vs previous period
+                    </p>
                 </Card>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Top Product Types Metric */}
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
                 <Card className="lg:col-span-2">
-                    <div className="flex justify-between items-center mb-6">
+                    <div className="mb-6 flex items-center justify-between">
                         <h3 className="font-serif text-lg">Top Product Types</h3>
-                        <Badge variant="neutral">Produced vs Backlog</Badge>
+                        <Badge variant="neutral">Current vs Previous Period</Badge>
                     </div>
+                    <div className="max-h-[420px] overflow-auto">
+                        <table className="min-w-full text-left text-sm">
+                            <thead className="border-b border-gray-100 bg-gray-50">
+                                <tr>
+                                    <th className="px-4 py-3 font-medium text-gray-500">Product Type</th>
+                                    <th className="px-4 py-3 text-right font-medium text-gray-500">Total</th>
+                                    <th className="px-4 py-3 text-right font-medium text-gray-500">Produced</th>
+                                    <th className="px-4 py-3 text-right font-medium text-gray-500">Backlog</th>
+                                    <th className="px-4 py-3 text-right font-medium text-gray-500">% Change</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                                {topProducts.map((product) => (
+                                    <tr key={product.name} className="hover:bg-gray-50/60">
+                                        <td className="px-4 py-3 font-medium text-gray-800">{product.name}</td>
+                                        <td className="px-4 py-3 text-right font-semibold text-maison-primary">{product.total}</td>
+                                        <td className="px-4 py-3 text-right text-emerald-600">{product.produced}</td>
+                                        <td className="px-4 py-3 text-right text-gray-600">{product.backlog}</td>
+                                        <td className={`px-4 py-3 text-right font-medium ${getDeltaClass(product.delta)}`}>
+                                            {formatDelta(product.delta)}
+                                        </td>
+                                    </tr>
+                                ))}
+                                {topProducts.length === 0 && (
+                                    <tr>
+                                        <td colSpan="5" className="px-4 py-8 text-center text-sm italic text-gray-400">
+                                            No product item records found in this date range.
+                                        </td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div className="mt-4 flex items-center justify-between gap-4">
+                        <p className="text-xs text-gray-500">
+                            % Change compares with the previous matching period.
+                        </p>
+                        <div className="mt-4">
+                            <Button onClick={() => router.push('/monthly-breakdown')}>
+                                Open Monthly Breakdown
+                            </Button>
+                        </div>
+                    </div>
+                </Card>
+
+                <Card>
+                    <h3 className="mb-4 font-serif text-lg">Pipeline Status</h3>
                     <div className="space-y-4">
-                        {topProducts.map((prod, index) => (
-                            <div key={index} className="flex items-center gap-4">
-                                <div className="w-1/3 truncate text-sm font-medium text-gray-700">
-                                    {prod.name}
-                                </div>
-                                <div className="flex-1 flex h-6 rounded-md overflow-hidden bg-gray-100">
-                                    {/* Produced - Green */}
-                                    {prod.produced > 0 && (
-                                        <div
-                                            style={{ width: `${(prod.produced / prod.total) * 100}%` }}
-                                            className="bg-emerald-500 h-full flex items-center justify-center text-[10px] text-white font-bold px-1 overflow-hidden transition-all"
-                                        >
-                                            {prod.produced}
-                                        </div>
-                                    )}
-                                    {/* Backlog - Gray */}
-                                    {prod.backlog > 0 && (
-                                        <div
-                                            style={{ width: `${(prod.backlog / prod.total) * 100}%` }}
-                                            className="bg-gray-300 h-full flex items-center justify-center text-[10px] text-gray-700 font-bold px-1 overflow-hidden transition-all"
-                                        >
-                                            {prod.backlog}
-                                        </div>
-                                    )}
-                                </div>
-                                <div className="w-16 text-right text-xs font-mono text-gray-500">
-                                    Total: {prod.total}
-                                </div>
+                        {categoryBreakdown.map((category) => (
+                            <div key={category.name} className="flex items-center justify-between rounded-lg bg-gray-50 p-3">
+                                <span className="text-sm text-gray-600">{category.name}</span>
+                                <span className="font-medium">{category.count}</span>
                             </div>
                         ))}
-                        {topProducts.length === 0 && (
-                            <div className="text-center py-8 text-gray-400 text-sm italic border-2 border-dashed border-gray-100 rounded-lg">
-                                No product item records found in this date range.
+                        {categoryBreakdown.length === 0 && (
+                            <div className="rounded-lg bg-gray-50 p-3 text-sm text-gray-500">
+                                No category activity in this date range.
                             </div>
                         )}
                     </div>
-                    <div className="flex gap-4 mt-6 text-xs text-gray-500 justify-end">
-                        <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-full bg-emerald-500"></div>Produced (Received)</div>
-                        <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-full bg-gray-300"></div>Backlog (Not Received)</div>
-                    </div>
-                </Card>
-
-                {/* Quick Actions / Status */}
-                <Card>
-                    <h3 className="font-serif text-lg mb-4">Pipeline Status</h3>
-                    <div className="space-y-4">
-                        <div className="flex justify-between items-center bg-gray-50 p-3 rounded-lg">
-                            <span className="text-sm text-gray-600">New / Cutting</span>
-                            <span className="font-medium">{stats.productionCount}</span>
-                        </div>
-                        <div className="flex justify-between items-center bg-gray-50 p-3 rounded-lg">
-                            <span className="text-sm text-gray-600">QC Check</span>
-                            <span className="font-medium">{stats.activeItems - stats.productionCount}</span>
-                        </div>
-                    </div>
-                    <Button className="w-full mt-6" onClick={() => router.push('/production/create')}>
-                        Start New Production
-                    </Button>
                 </Card>
             </div>
-            {/* Weekly Payroll Summary (MVP) */}
+
             <Card>
-                <div className="flex justify-between items-center mb-4">
+                <div className="mb-4 flex items-center justify-between">
                     <h3 className="font-serif text-lg">Weekly Payroll Summary</h3>
                     <Badge variant="neutral">Approved Tasks Only</Badge>
                 </div>
-                <div className="overflow-x-auto">
-                    <table className="min-w-full text-left text-sm whitespace-nowrap">
-                        <thead className="bg-gray-50 border-b border-gray-100">
+                <div className="max-h-[420px] overflow-auto">
+                    <table className="min-w-full whitespace-nowrap text-left text-sm">
+                        <thead className="border-b border-gray-100 bg-gray-50">
                             <tr>
                                 <th className="px-4 py-3 font-medium text-gray-500">Name</th>
                                 <th className="px-4 py-3 font-medium text-gray-500">Department</th>
-                                <th className="px-4 py-3 font-medium text-gray-500 text-center">Approved Tasks</th>
-                                <th className="px-4 py-3 font-bold text-maison-primary text-right">Total Payout</th>
+                                <th className="px-4 py-3 text-center font-medium text-gray-500">Approved Tasks</th>
+                                <th className="px-4 py-3 text-right font-bold text-maison-primary">Total Payout</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
-                            {weeklyPayroll.map((p, index) => (
-                                <tr key={`${p.tailor_id}-${index}`} className="hover:bg-gray-50/50">
-                                    <td className="px-4 py-3 font-medium text-gray-900">{p.tailor_name}</td>
-                                    <td className="px-4 py-3 text-gray-500">{p.department}</td>
-                                    <td className="px-4 py-3 text-center">{p.task_count}</td>
+                            {weeklyPayroll.map((payrollRow, index) => (
+                                <tr key={`${payrollRow.tailor_id}-${index}`} className="hover:bg-gray-50/50">
+                                    <td className="px-4 py-3 font-medium text-gray-900">{payrollRow.tailor_name}</td>
+                                    <td className="px-4 py-3 text-gray-500">{payrollRow.department}</td>
+                                    <td className="px-4 py-3 text-center">{payrollRow.task_count}</td>
                                     <td className="px-4 py-3 text-right font-bold text-maison-primary">
-                                        ₦{Number(p.weekly_total_pay || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        NGN {Number(payrollRow.weekly_total_pay || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                     </td>
                                 </tr>
                             ))}
                             {weeklyPayroll.length === 0 && (
                                 <tr>
-                                    <td colSpan="7" className="px-4 py-8 text-center text-gray-500">No payroll data available.</td>
+                                    <td colSpan="4" className="px-4 py-8 text-center text-gray-500">No payroll data available.</td>
                                 </tr>
                             )}
                         </tbody>

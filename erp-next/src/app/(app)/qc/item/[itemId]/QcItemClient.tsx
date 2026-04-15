@@ -23,8 +23,12 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
     const [newTask, setNewTask] = useState({
         category_type_id: '',
         task_type_id: '',
+        task_type_ids: [],
         tailor_id: '',
     });
+    const [newCategorySearch, setNewCategorySearch] = useState('');
+    const [newTaskTypeSearch, setNewTaskTypeSearch] = useState('');
+    const [newTailorSearch, setNewTailorSearch] = useState('');
 
     const [editingTask, setEditingTask] = useState(null);
     const [editTaskData, setEditTaskData] = useState({
@@ -33,6 +37,9 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
         task_type_id: '',
         tailor_id: '',
     });
+    const [editCategorySearch, setEditCategorySearch] = useState('');
+    const [editTaskTypeSearch, setEditTaskTypeSearch] = useState('');
+    const [editTailorSearch, setEditTailorSearch] = useState('');
 
     useEffect(() => {
         if (itemId) {
@@ -70,6 +77,8 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
 
     // 2. Available Task Types: Filter by Product Type AND Selected Category directly from rateCard
     const activeCategoryId = editingTask ? editTaskData.category_type_id : newTask.category_type_id;
+    const activeCategory = availableCategories.find(c => c.id === activeCategoryId);
+    const isAmendmentCategory = activeCategory?.name?.toLowerCase() === 'amendment';
 
     const usedTaskTypeIdsForSelectedCategory = tasks
         .filter(t => t.category_type_id === activeCategoryId)
@@ -86,21 +95,45 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
         )
         .map(r => ({ id: r.task_type_id, name: r.name }));
 
+    const activeCategorySearch = editingTask ? editCategorySearch : newCategorySearch;
+    const filteredCategories = availableCategories.filter(c =>
+        c.name?.toLowerCase().includes(activeCategorySearch.trim().toLowerCase())
+    );
+
+    const activeTaskTypeSearch = editingTask ? editTaskTypeSearch : newTaskTypeSearch;
+    const filteredTaskTypes = availableTaskTypes.filter(t =>
+        t.name?.toLowerCase().includes(activeTaskTypeSearch.trim().toLowerCase())
+    );
+
     // --- Rate Calculation for Display ---
-    const selectedRate = rateCard.find(r =>
+    const selectedTaskTypeIds = editingTask
+        ? [editTaskData.task_type_id].filter(Boolean)
+        : (isAmendmentCategory ? newTask.task_type_ids : [newTask.task_type_id].filter(Boolean));
+
+    const selectedRates = rateCard.filter(r =>
         r.product_type_id === item?.product_type_id &&
         r.category_type_id === (editingTask ? editTaskData.category_type_id : newTask.category_type_id) &&
-        r.task_type_id === (editingTask ? editTaskData.task_type_id : newTask.task_type_id)
+        selectedTaskTypeIds.includes(r.task_type_id)
     );
+
+    const selectedRate = selectedRates[0];
 
     const activeTailorId = editingTask ? editTaskData.tailor_id : newTask.tailor_id;
     const selectedTailor = tailors.find(t => t.id === activeTailorId);
+    const activeTailorSearch = editingTask ? editTailorSearch : newTailorSearch;
+    const selectableTailors = tailors.filter(t => t.active || t.id === activeTailorId);
+    const filteredTailors = selectableTailors.filter(t =>
+        t.name?.toLowerCase().includes(activeTailorSearch.trim().toLowerCase())
+    );
 
     const tailorBand = selectedTailor ? (selectedTailor.band || 'A') : 'A';
 
     let calculatedPay = '0.00';
-    if (selectedRate && selectedTailor) {
-        calculatedPay = tailorBand === 'B' ? selectedRate.band_b_fee.toFixed(2) : selectedRate.band_a_fee.toFixed(2);
+    if (selectedRates.length > 0 && selectedTailor) {
+        const totalPay = selectedRates.reduce((sum, rate) => {
+            return sum + (tailorBand === 'B' ? Number(rate.band_b_fee || 0) : Number(rate.band_a_fee || 0));
+        }, 0);
+        calculatedPay = totalPay.toFixed(2);
     }
 
 
@@ -117,24 +150,37 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
             return;
         }
 
-        if (!selectedRate) {
+        if (selectedRates.length === 0) {
             alert("Invalid Rate Configuration");
             return;
         }
 
-        if (!newTask?.category_type_id || !newTask?.task_type_id || !newTask?.tailor_id) {
+        const selectedTaskIds = isAmendmentCategory ? newTask.task_type_ids : [newTask.task_type_id].filter(Boolean);
+
+        if (!newTask?.category_type_id || selectedTaskIds.length === 0 || !newTask?.tailor_id) {
             alert("Please select category, task, and tailor.");
             return;
         }
 
         try {
-            await db.createWorkAssignment({
-                item_id: item.id,
-                category_type_id: newTask.category_type_id,
-                task_type_id: newTask.task_type_id,
-                tailor_id: newTask.tailor_id
-            });
+            await Promise.all(selectedTaskIds.map(taskTypeId => (
+                db.createWorkAssignment({
+                    item_id: item.id,
+                    category_type_id: newTask.category_type_id,
+                    task_type_id: taskTypeId,
+                    tailor_id: newTask.tailor_id
+                })
+            )));
 
+            setNewTask({
+                category_type_id: '',
+                task_type_id: '',
+                task_type_ids: [],
+                tailor_id: '',
+            });
+            setNewCategorySearch('');
+            setNewTaskTypeSearch('');
+            setNewTailorSearch('');
             setShowAssignForm(false);
             await loadData();
         } catch (err) {
@@ -150,7 +196,7 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
             return;
         }
         e.preventDefault();
-        if (!selectedRate) {
+        if (selectedRates.length === 0) {
             alert("Invalid Rate Configuration");
             return;
         }
@@ -162,6 +208,9 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                 tailor_id: editTaskData.tailor_id
             });
             setEditingTask(null);
+            setEditCategorySearch('');
+            setEditTaskTypeSearch('');
+            setEditTailorSearch('');
             loadData(); // Refresh
         } catch (err) {
             alert(err.message);
@@ -209,6 +258,50 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
         }
     };
 
+    const handleSelectTailor = (tailor, mode) => {
+        if (mode === 'edit') {
+            setEditTaskData(prev => ({ ...prev, tailor_id: tailor.id }));
+            setEditTailorSearch(tailor.name);
+            return;
+        }
+
+        setNewTask(prev => ({ ...prev, tailor_id: tailor.id }));
+        setNewTailorSearch(tailor.name);
+    };
+
+    const handleSelectCategory = (category, mode) => {
+        if (mode === 'edit') {
+            setEditTaskData(prev => ({
+                ...prev,
+                category_type_id: category.id,
+                task_type_id: '',
+            }));
+            setEditCategorySearch(category.name);
+            setEditTaskTypeSearch('');
+            return;
+        }
+
+        setNewTask(prev => ({
+            ...prev,
+            category_type_id: category.id,
+            task_type_id: '',
+            task_type_ids: [],
+        }));
+        setNewCategorySearch(category.name);
+        setNewTaskTypeSearch('');
+    };
+
+    const handleSelectTaskType = (taskType, mode) => {
+        if (mode === 'edit') {
+            setEditTaskData(prev => ({ ...prev, task_type_id: taskType.id }));
+            setEditTaskTypeSearch(taskType.name);
+            return;
+        }
+
+        setNewTask(prev => ({ ...prev, task_type_id: taskType.id }));
+        setNewTaskTypeSearch(taskType.name);
+    };
+
     return (
         <div className="space-y-6">
             {!onClose && (
@@ -230,7 +323,20 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                         Ticket: {item.ticket_number} | Customer: {item.customer_name}
                     </p>
                 </div>
-                <Button onClick={() => setShowAssignForm(!showAssignForm)} disabled={!canManageQc}>
+                <Button onClick={() => {
+                    setShowAssignForm(!showAssignForm);
+                    if (!showAssignForm) {
+                        setNewCategorySearch('');
+                        setNewTaskTypeSearch('');
+                        setNewTailorSearch('');
+                        setNewTask({
+                            category_type_id: '',
+                            task_type_id: '',
+                            task_type_ids: [],
+                            tailor_id: '',
+                        });
+                    }
+                }} disabled={!canManageQc}>
                     <Plus size={16} className="mr-2" /> Assign Task
                 </Button>
             </div>
@@ -250,51 +356,129 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                                 <div>
                                     <label className="block text-sm font-medium text-maison-secondary mb-1.5">Category</label>
-                                    <select
-                                        className="block w-full rounded-lg border-gray-200 shadow-sm sm:text-sm py-2.5"
-                                        value={newTask.category_type_id}
-                                        onChange={e => setNewTask({ ...newTask, category_type_id: e.target.value, task_type_id: '' })}
-                                        required
-                                    >
-                                        <option value="">Select Category...</option>
-                                        {availableCategories.map(c => (
-                                            <option key={c.id} value={c.id}>{c.name}</option>
-                                        ))}
-                                    </select>
+                                    <div className="space-y-2">
+                                        <input
+                                            type="text"
+                                            className="block w-full rounded-lg border-gray-200 shadow-sm sm:text-sm py-2.5"
+                                            value={newCategorySearch}
+                                            onChange={e => {
+                                                setNewCategorySearch(e.target.value);
+                                                setNewTask(prev => ({ ...prev, category_type_id: '', task_type_id: '', task_type_ids: [] }));
+                                                setNewTaskTypeSearch('');
+                                            }}
+                                            placeholder="Type category name..."
+                                            required
+                                        />
+                                        <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white">
+                                            {filteredCategories.length > 0 ? filteredCategories.map(c => (
+                                                <button
+                                                    key={c.id}
+                                                    type="button"
+                                                    onClick={() => handleSelectCategory(c, 'new')}
+                                                    className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50"
+                                                >
+                                                    <span>{c.name}</span>
+                                                </button>
+                                            )) : (
+                                                <div className="px-3 py-2 text-sm text-gray-500">No matching categories found.</div>
+                                            )}
+                                        </div>
+                                    </div>
                                 </div>
 
                                 <div>
                                     <label className="block text-sm font-medium text-maison-secondary mb-1.5">Task Type</label>
-                                    <select
-                                        className="block w-full rounded-lg border-gray-200 shadow-sm sm:text-sm py-2.5"
-                                        value={newTask.task_type_id}
-                                        onChange={e => setNewTask({ ...newTask, task_type_id: e.target.value })}
-                                        required
-                                        disabled={!newTask.category_type_id}
-                                    >
-                                        <option value="">Select Task...</option>
-                                        {availableTaskTypes.map(t => (
-                                            <option key={t.id} value={t.id}>{t.name}</option>
-                                        ))}
-                                    </select>
+                                    <div className="space-y-2">
+                                        <input
+                                            type="text"
+                                            className="block w-full rounded-lg border-gray-200 shadow-sm sm:text-sm py-2.5"
+                                            value={newTaskTypeSearch}
+                                            onChange={e => {
+                                                setNewTaskTypeSearch(e.target.value);
+                                                if (!isAmendmentCategory) {
+                                                    setNewTask(prev => ({ ...prev, task_type_id: '' }));
+                                                }
+                                            }}
+                                            placeholder="Type task name..."
+                                            disabled={!newTask.category_type_id}
+                                        />
+                                        <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white">
+                                            {!newTask.category_type_id ? (
+                                                <div className="px-3 py-2 text-sm text-gray-500">Select a category first.</div>
+                                            ) : filteredTaskTypes.length > 0 ? (
+                                                isAmendmentCategory ? filteredTaskTypes.map(t => {
+                                                    const checked = newTask.task_type_ids.includes(t.id);
+                                                    return (
+                                                        <label
+                                                            key={t.id}
+                                                            className="flex w-full items-center gap-3 px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer"
+                                                        >
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={checked}
+                                                                onChange={() => {
+                                                                    setNewTask(prev => ({
+                                                                        ...prev,
+                                                                        task_type_ids: checked
+                                                                            ? prev.task_type_ids.filter(id => id !== t.id)
+                                                                            : [...prev.task_type_ids, t.id],
+                                                                        task_type_id: ''
+                                                                    }));
+                                                                }}
+                                                            />
+                                                            <span>{t.name}</span>
+                                                        </label>
+                                                    );
+                                                }) : filteredTaskTypes.map(t => (
+                                                    <button
+                                                        key={t.id}
+                                                        type="button"
+                                                        onClick={() => handleSelectTaskType(t, 'new')}
+                                                        className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50"
+                                                    >
+                                                        <span>{t.name}</span>
+                                                    </button>
+                                                ))
+                                            ) : (
+                                                <div className="px-3 py-2 text-sm text-gray-500">No matching task types found.</div>
+                                            )}
+                                        </div>
+                                    </div>
                                 </div>
 
                                 <div>
                                     <label className="block text-sm font-medium text-maison-secondary mb-1.5">Tailor</label>
-                                    <select
-                                        className="block w-full rounded-lg border-gray-200 shadow-sm sm:text-sm py-2.5"
-                                        value={newTask.tailor_id}
-                                        onChange={e => setNewTask({ ...newTask, tailor_id: e.target.value })}
-                                        required
-                                    >
-                                        <option value="">Select Tailor...</option>
-                                        {tailors.filter(t => t.active).map(t => {
-                                            const band = t.band || 'A';
-                                            return (
-                                                <option key={t.id} value={t.id}>{t.name} (Band {band})</option>
-                                            );
-                                        })}
-                                    </select>
+                                    <div className="space-y-2">
+                                        <input
+                                            type="text"
+                                            className="block w-full rounded-lg border-gray-200 shadow-sm sm:text-sm py-2.5"
+                                            value={newTailorSearch}
+                                            onChange={e => {
+                                                setNewTailorSearch(e.target.value);
+                                                setNewTask(prev => ({ ...prev, tailor_id: '' }));
+                                            }}
+                                            placeholder="Type tailor name..."
+                                            required
+                                        />
+                                        <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white">
+                                            {filteredTailors.length > 0 ? filteredTailors.map(t => {
+                                                const band = t.band || 'A';
+                                                return (
+                                                    <button
+                                                        key={t.id}
+                                                        type="button"
+                                                        onClick={() => handleSelectTailor(t, 'new')}
+                                                        className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50"
+                                                    >
+                                                        <span>{t.name}</span>
+                                                        <span className="text-xs text-gray-500">Band {band}</span>
+                                                    </button>
+                                                );
+                                            }) : (
+                                                <div className="px-3 py-2 text-sm text-gray-500">No matching tailors found.</div>
+                                            )}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
 
@@ -313,7 +497,18 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                             </div>
 
                             <div className="pt-2 flex justify-end gap-3">
-                                <Button type="button" variant="ghost" onClick={() => setShowAssignForm(false)}>Cancel</Button>
+                                <Button type="button" variant="ghost" onClick={() => {
+                                    setShowAssignForm(false);
+                                    setNewCategorySearch('');
+                                    setNewTaskTypeSearch('');
+                                    setNewTailorSearch('');
+                                    setNewTask({
+                                        category_type_id: '',
+                                        task_type_id: '',
+                                        task_type_ids: [],
+                                        tailor_id: '',
+                                    });
+                                }}>Cancel</Button>
                                 <Button type="submit">Assign Task</Button>
                             </div>
                         </form>
@@ -331,51 +526,102 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div>
                                 <label className="block text-sm font-medium text-maison-secondary mb-1.5">Category</label>
-                                <select
-                                    className="block w-full rounded-lg border-gray-200 shadow-sm sm:text-sm py-2.5"
-                                    value={editTaskData.category_type_id}
-                                    onChange={e => setEditTaskData({ ...editTaskData, category_type_id: e.target.value, task_type_id: '' })}
-                                    required
-                                >
-                                    <option value="">Select Category...</option>
-                                    {availableCategories.map(c => (
-                                        <option key={c.id} value={c.id}>{c.name}</option>
-                                    ))}
-                                </select>
+                                <div className="space-y-2">
+                                    <input
+                                        type="text"
+                                        className="block w-full rounded-lg border-gray-200 shadow-sm sm:text-sm py-2.5"
+                                        value={editCategorySearch}
+                                        onChange={e => {
+                                            setEditCategorySearch(e.target.value);
+                                            setEditTaskData(prev => ({ ...prev, category_type_id: '', task_type_id: '' }));
+                                            setEditTaskTypeSearch('');
+                                        }}
+                                        placeholder="Type category name..."
+                                        required
+                                    />
+                                    <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white">
+                                        {filteredCategories.length > 0 ? filteredCategories.map(c => (
+                                            <button
+                                                key={c.id}
+                                                type="button"
+                                                onClick={() => handleSelectCategory(c, 'edit')}
+                                                className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50"
+                                            >
+                                                <span>{c.name}</span>
+                                            </button>
+                                        )) : (
+                                            <div className="px-3 py-2 text-sm text-gray-500">No matching categories found.</div>
+                                        )}
+                                    </div>
+                                </div>
                             </div>
 
                             <div>
                                 <label className="block text-sm font-medium text-maison-secondary mb-1.5">Task Type</label>
-                                <select
-                                    className="block w-full rounded-lg border-gray-200 shadow-sm sm:text-sm py-2.5"
-                                    value={editTaskData.task_type_id}
-                                    onChange={e => setEditTaskData({ ...editTaskData, task_type_id: e.target.value })}
-                                    required
-                                    disabled={!editTaskData.category_type_id}
-                                >
-                                    <option value="">Select Task...</option>
-                                    {availableTaskTypes.map(t => (
-                                        <option key={t.id} value={t.id}>{t.name}</option>
-                                    ))}
-                                </select>
+                                <div className="space-y-2">
+                                    <input
+                                        type="text"
+                                        className="block w-full rounded-lg border-gray-200 shadow-sm sm:text-sm py-2.5"
+                                        value={editTaskTypeSearch}
+                                        onChange={e => {
+                                            setEditTaskTypeSearch(e.target.value);
+                                            setEditTaskData(prev => ({ ...prev, task_type_id: '' }));
+                                        }}
+                                        placeholder="Type task name..."
+                                        disabled={!editTaskData.category_type_id}
+                                    />
+                                    <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white">
+                                        {!editTaskData.category_type_id ? (
+                                            <div className="px-3 py-2 text-sm text-gray-500">Select a category first.</div>
+                                        ) : filteredTaskTypes.length > 0 ? filteredTaskTypes.map(t => (
+                                            <button
+                                                key={t.id}
+                                                type="button"
+                                                onClick={() => handleSelectTaskType(t, 'edit')}
+                                                className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50"
+                                            >
+                                                <span>{t.name}</span>
+                                            </button>
+                                        )) : (
+                                            <div className="px-3 py-2 text-sm text-gray-500">No matching task types found.</div>
+                                        )}
+                                    </div>
+                                </div>
                             </div>
 
                             <div>
                                 <label className="block text-sm font-medium text-maison-secondary mb-1.5">Tailor</label>
-                                <select
-                                    className="block w-full rounded-lg border-gray-200 shadow-sm sm:text-sm py-2.5"
-                                    value={editTaskData.tailor_id}
-                                    onChange={e => setEditTaskData({ ...editTaskData, tailor_id: e.target.value })}
-                                    required
-                                >
-                                    <option value="">Select Tailor...</option>
-                                    {tailors.filter(t => t.active).map(t => {
-                                        const band = t.band || 'A';
-                                        return (
-                                            <option key={t.id} value={t.id}>{t.name} (Band {band})</option>
-                                        );
-                                    })}
-                                </select>
+                                <div className="space-y-2">
+                                    <input
+                                        type="text"
+                                        className="block w-full rounded-lg border-gray-200 shadow-sm sm:text-sm py-2.5"
+                                        value={editTailorSearch}
+                                        onChange={e => {
+                                            setEditTailorSearch(e.target.value);
+                                            setEditTaskData(prev => ({ ...prev, tailor_id: '' }));
+                                        }}
+                                        placeholder="Type tailor name..."
+                                        required
+                                    />
+                                    <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white">
+                                        {filteredTailors.length > 0 ? filteredTailors.map(t => {
+                                            const band = t.band || 'A';
+                                            return (
+                                                <button
+                                                    key={t.id}
+                                                    type="button"
+                                                    onClick={() => handleSelectTailor(t, 'edit')}
+                                                    className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50"
+                                                >
+                                                    <span>{t.name}</span>
+                                                    <span className="text-xs text-gray-500">Band {band}</span>
+                                                </button>
+                                            );
+                                        }) : (
+                                            <div className="px-3 py-2 text-sm text-gray-500">No matching tailors found.</div>
+                                        )}
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -394,7 +640,12 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                         </div>
 
                         <div className="pt-2 flex justify-end gap-3">
-                            <Button type="button" variant="ghost" onClick={() => setEditingTask(null)}>Cancel</Button>
+                            <Button type="button" variant="ghost" onClick={() => {
+                                setEditingTask(null);
+                                setEditCategorySearch('');
+                                setEditTaskTypeSearch('');
+                                setEditTailorSearch('');
+                            }}>Cancel</Button>
                             <Button type="submit">Update Task</Button>
                         </div>
                     </form>
@@ -410,7 +661,7 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                             <TableCell>{task.tailor_name}</TableCell>
                             <TableCell>₦{parseFloat(task.pay_amount).toFixed(2)}</TableCell>
                             <TableCell>
-                                <Badge variant={task.status === 'QC_PASSED' || task.status === 'PAID' ? 'success' : task.status === 'QC_FAILED' ? 'danger' : 'warning'}>
+                                <Badge variant={task.status === 'Approved' || task.status === 'PAID' ? 'success' : task.status === 'Rejected' ? 'danger' : 'warning'}>
                                     {task.status}
                                 </Badge>
                             </TableCell>
@@ -430,6 +681,9 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                                                     task_type_id: task.task_type_id,
                                                     tailor_id: task.tailor_id
                                                 });
+                                                setEditCategorySearch(task.category_name || '');
+                                                setEditTaskTypeSearch(task.task_type_name || '');
+                                                setEditTailorSearch(task.tailor_name || '');
                                                 setShowAssignForm(false);
                                             }}
                                             disabled={!canManageQc}
