@@ -4,7 +4,7 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { endOfWeek, isWithinInterval, startOfWeek } from 'date-fns';
-import { CheckCircle2, Shirt, ShoppingBag } from 'lucide-react';
+import { ArrowUpDown, CheckCircle2, Shirt, ShoppingBag } from 'lucide-react';
 import { db } from '@/services/db';
 import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
@@ -41,6 +41,8 @@ export default function Dashboard() {
     const router = useRouter();
     const [authorized, setAuthorized] = useState(false);
     const [accessDenied, setAccessDenied] = useState(false);
+    const [productSort, setProductSort] = useState({ column: 'total', direction: 'desc' });
+    const [payrollSort, setPayrollSort] = useState({ column: 'weekly_total_pay', direction: 'desc' });
     const [stats, setStats] = useState({
         totalRevenue: 0,
         totalRevenueChange: 0,
@@ -217,6 +219,57 @@ export default function Dashboard() {
 
     if (!authorized) return null;
 
+    const sortedTopProducts = [...topProducts].sort((a, b) => {
+        const { column, direction } = productSort;
+        const modifier = direction === 'asc' ? 1 : -1;
+
+        if (column === 'name') {
+            return a.name.localeCompare(b.name) * modifier;
+        }
+
+        const valueA = Number(a[column] || 0);
+        const valueB = Number(b[column] || 0);
+        return (valueA - valueB) * modifier;
+    });
+
+    const toggleProductSort = (column) => {
+        setProductSort((prev) => ({
+            column,
+            direction: prev.column === column && prev.direction === 'desc' ? 'asc' : 'desc',
+        }));
+    };
+
+    const sortedWeeklyPayroll = [...weeklyPayroll].sort((a, b) => {
+        const { column, direction } = payrollSort;
+        const modifier = direction === 'asc' ? 1 : -1;
+
+        if (column === 'tailor_name' || column === 'department') {
+            const valueA = String(a[column] || '');
+            const valueB = String(b[column] || '');
+            return valueA.localeCompare(valueB) * modifier;
+        }
+
+        const valueA = Number(a[column] || 0);
+        const valueB = Number(b[column] || 0);
+        return (valueA - valueB) * modifier;
+    });
+
+    const togglePayrollSort = (column) => {
+        setPayrollSort((prev) => ({
+            column,
+            direction: prev.column === column && prev.direction === 'desc' ? 'asc' : 'desc',
+        }));
+    };
+
+    const getPayrollHeaderClass = (column, align = 'left') => {
+        const base = align === 'right'
+            ? 'ml-auto justify-end'
+            : align === 'center'
+                ? 'mx-auto justify-center'
+                : 'justify-start';
+        return `flex w-full items-center gap-1 text-inherit ${base}`;
+    };
+
     return (
         <div className="space-y-6">
             <div className="flex flex-col items-start justify-between gap-4 rounded-xl border border-gray-100 bg-white p-4 shadow-sm sm:flex-row sm:items-center">
@@ -314,15 +367,40 @@ export default function Dashboard() {
                         <table className="min-w-full text-left text-sm">
                             <thead className="border-b border-gray-100 bg-gray-50">
                                 <tr>
-                                    <th className="px-4 py-3 font-medium text-gray-500">Product Type</th>
-                                    <th className="px-4 py-3 text-right font-medium text-gray-500">Total</th>
-                                    <th className="px-4 py-3 text-right font-medium text-gray-500">Produced</th>
-                                    <th className="px-4 py-3 text-right font-medium text-gray-500">Backlog</th>
-                                    <th className="px-4 py-3 text-right font-medium text-gray-500">% Change</th>
+                                    <th className="px-4 py-3 font-medium text-gray-500">
+                                        <button type="button" onClick={() => toggleProductSort('name')} className={getPayrollHeaderClass('name')}>
+                                            Product Type
+                                            <ArrowUpDown size={14} className={productSort.column === 'name' ? 'text-maison-primary' : 'text-gray-400'} />
+                                        </button>
+                                    </th>
+                                    <th className="px-4 py-3 text-right font-medium text-gray-500">
+                                        <button type="button" onClick={() => toggleProductSort('total')} className={getPayrollHeaderClass('total', 'right')}>
+                                            Total
+                                            <ArrowUpDown size={14} className={productSort.column === 'total' ? 'text-maison-primary' : 'text-gray-400'} />
+                                        </button>
+                                    </th>
+                                    <th className="px-4 py-3 text-right font-medium text-gray-500">
+                                        <button type="button" onClick={() => toggleProductSort('produced')} className={getPayrollHeaderClass('produced', 'right')}>
+                                            Produced
+                                            <ArrowUpDown size={14} className={productSort.column === 'produced' ? 'text-maison-primary' : 'text-gray-400'} />
+                                        </button>
+                                    </th>
+                                    <th className="px-4 py-3 text-right font-medium text-gray-500">
+                                        <button type="button" onClick={() => toggleProductSort('backlog')} className={getPayrollHeaderClass('backlog', 'right')}>
+                                            Backlog
+                                            <ArrowUpDown size={14} className={productSort.column === 'backlog' ? 'text-maison-primary' : 'text-gray-400'} />
+                                        </button>
+                                    </th>
+                                    <th className="px-4 py-3 text-right font-medium text-gray-500">
+                                        <button type="button" onClick={() => toggleProductSort('delta')} className={getPayrollHeaderClass('delta', 'right')}>
+                                            % Change
+                                            <ArrowUpDown size={14} className={productSort.column === 'delta' ? 'text-maison-primary' : 'text-gray-400'} />
+                                        </button>
+                                    </th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100">
-                                {topProducts.map((product) => (
+                                {sortedTopProducts.map((product) => (
                                     <tr key={product.name} className="hover:bg-gray-50/60">
                                         <td className="px-4 py-3 font-medium text-gray-800">{product.name}</td>
                                         <td className="px-4 py-3 text-right font-semibold text-maison-primary">{product.total}</td>
@@ -382,14 +460,34 @@ export default function Dashboard() {
                     <table className="min-w-full whitespace-nowrap text-left text-sm">
                         <thead className="border-b border-gray-100 bg-gray-50">
                             <tr>
-                                <th className="px-4 py-3 font-medium text-gray-500">Name</th>
-                                <th className="px-4 py-3 font-medium text-gray-500">Department</th>
-                                <th className="px-4 py-3 text-center font-medium text-gray-500">Approved Tasks</th>
-                                <th className="px-4 py-3 text-right font-bold text-maison-primary">Total Payout</th>
+                                <th className="px-4 py-3 font-medium text-gray-500">
+                                    <button type="button" onClick={() => togglePayrollSort('tailor_name')} className={getPayrollHeaderClass('tailor_name')}>
+                                        Name
+                                        <ArrowUpDown size={14} className={payrollSort.column === 'tailor_name' ? 'text-maison-primary' : 'text-gray-400'} />
+                                    </button>
+                                </th>
+                                <th className="px-4 py-3 font-medium text-gray-500">
+                                    <button type="button" onClick={() => togglePayrollSort('department')} className={getPayrollHeaderClass('department')}>
+                                        Department
+                                        <ArrowUpDown size={14} className={payrollSort.column === 'department' ? 'text-maison-primary' : 'text-gray-400'} />
+                                    </button>
+                                </th>
+                                <th className="px-4 py-3 text-center font-medium text-gray-500">
+                                    <button type="button" onClick={() => togglePayrollSort('task_count')} className={getPayrollHeaderClass('task_count', 'center')}>
+                                        Approved Tasks
+                                        <ArrowUpDown size={14} className={payrollSort.column === 'task_count' ? 'text-maison-primary' : 'text-gray-400'} />
+                                    </button>
+                                </th>
+                                <th className="px-4 py-3 text-right font-bold text-maison-primary">
+                                    <button type="button" onClick={() => togglePayrollSort('weekly_total_pay')} className={getPayrollHeaderClass('weekly_total_pay', 'right')}>
+                                        Total Payout
+                                        <ArrowUpDown size={14} className={payrollSort.column === 'weekly_total_pay' ? 'text-maison-primary' : 'text-gray-400'} />
+                                    </button>
+                                </th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
-                            {weeklyPayroll.map((payrollRow, index) => (
+                            {sortedWeeklyPayroll.map((payrollRow, index) => (
                                 <tr key={`${payrollRow.tailor_id}-${index}`} className="hover:bg-gray-50/50">
                                     <td className="px-4 py-3 font-medium text-gray-900">{payrollRow.tailor_name}</td>
                                     <td className="px-4 py-3 text-gray-500">{payrollRow.department}</td>
