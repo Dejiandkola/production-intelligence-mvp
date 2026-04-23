@@ -4,7 +4,7 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { endOfWeek, isWithinInterval, startOfWeek } from 'date-fns';
-import { ArrowUpDown, CheckCircle2, Shirt, ShoppingBag } from 'lucide-react';
+import { ArrowUpDown, CheckCircle2, Search, Shirt, ShoppingBag } from 'lucide-react';
 import { db } from '@/services/db';
 import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
@@ -43,6 +43,7 @@ export default function Dashboard() {
     const [accessDenied, setAccessDenied] = useState(false);
     const [productSort, setProductSort] = useState({ column: 'total', direction: 'desc' });
     const [payrollSort, setPayrollSort] = useState({ column: 'weekly_total_pay', direction: 'desc' });
+    const [payrollNameSearch, setPayrollNameSearch] = useState('');
     const [stats, setStats] = useState({
         totalRevenue: 0,
         totalRevenueChange: 0,
@@ -239,7 +240,13 @@ export default function Dashboard() {
         }));
     };
 
-    const sortedWeeklyPayroll = [...weeklyPayroll].sort((a, b) => {
+    const filteredWeeklyPayroll = weeklyPayroll.filter((payrollRow) => {
+        const query = payrollNameSearch.trim().toLowerCase();
+        if (!query) return true;
+        return String(payrollRow.tailor_name || '').toLowerCase().includes(query);
+    });
+
+    const sortedWeeklyPayroll = [...filteredWeeklyPayroll].sort((a, b) => {
         const { column, direction } = payrollSort;
         const modifier = direction === 'asc' ? 1 : -1;
 
@@ -452,9 +459,21 @@ export default function Dashboard() {
             </div>
 
             <Card>
-                <div className="mb-4 flex items-center justify-between">
-                    <h3 className="font-serif text-lg">Weekly Payroll Summary</h3>
-                    <Badge variant="neutral">Approved Tasks Only</Badge>
+                <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center gap-3">
+                        <h3 className="font-serif text-lg">Weekly Payroll Summary</h3>
+                        <Badge variant="neutral">Approved Tasks Only</Badge>
+                    </div>
+                    <div className="relative w-full sm:w-72">
+                        <Search size={16} className="absolute left-3 top-2.5 text-gray-400" />
+                        <input
+                            type="text"
+                            placeholder="Search name..."
+                            value={payrollNameSearch}
+                            onChange={(e) => setPayrollNameSearch(e.target.value)}
+                            className="w-full rounded-md border border-gray-200 py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-maison-primary/20"
+                        />
+                    </div>
                 </div>
                 <div className="max-h-[420px] overflow-auto">
                     <table className="min-w-full whitespace-nowrap text-left text-sm">
@@ -497,9 +516,11 @@ export default function Dashboard() {
                                     </td>
                                 </tr>
                             ))}
-                            {weeklyPayroll.length === 0 && (
+                            {sortedWeeklyPayroll.length === 0 && (
                                 <tr>
-                                    <td colSpan="4" className="px-4 py-8 text-center text-gray-500">No payroll data available.</td>
+                                    <td colSpan="4" className="px-4 py-8 text-center text-gray-500">
+                                        {weeklyPayroll.length === 0 ? 'No payroll data available.' : 'No payroll records match that name.'}
+                                    </td>
                                 </tr>
                             )}
                         </tbody>

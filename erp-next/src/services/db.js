@@ -1381,7 +1381,7 @@ async updateTicket(id, { customer_name }) {
         return count || 0
     },
 
-    async getWeeklyPayroll(startDate, endDate) {
+    async getPayrollEntries(startDate, endDate) {
         const ctx = await getContext()
 
         let query = supabase
@@ -1420,17 +1420,26 @@ async updateTicket(id, { customer_name }) {
             throw new Error(error.message)
         }
 
+        return (data || []).map(wa => ({
+            ...wa,
+            tailor_name: wa.tailors?.name || 'Unknown',
+            department: wa.tailors?.department || 'Production'
+        }))
+    },
+
+    async getWeeklyPayroll(startDate, endDate) {
+        const data = await this.getPayrollEntries(startDate, endDate)
+
         const payrollMap = {}
 
-        for (const wa of (data || [])) {
+        for (const wa of data) {
             const tailorId = wa.tailor_id
-            const tailor = wa.tailors
 
             if (!payrollMap[tailorId]) {
                 payrollMap[tailorId] = {
                     tailor_id: tailorId,
-                    tailor_name: tailor?.name || 'Unknown',
-                    department: tailor?.department || 'Production',
+                    tailor_name: wa.tailor_name,
+                    department: wa.department,
                     weekly_verified_total: 0,
                     weekly_total_pay: 0,
                     task_count: 0

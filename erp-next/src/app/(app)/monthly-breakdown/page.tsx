@@ -72,9 +72,9 @@ export default function MonthlyBreakdownPage() {
     };
 
     const loadBreakdown = async () => {
-        const [allItems, allTasks] = await Promise.all([
+        const [allItems, payrollEntries] = await Promise.all([
             db.getItems(),
-            db.getTasks(),
+            db.getPayrollEntries(),
         ]);
 
         const producedDates = allItems
@@ -82,9 +82,8 @@ export default function MonthlyBreakdownPage() {
             .map(item => new Date(item.updated_at || item.created_at))
             .filter(date => !Number.isNaN(date.getTime()));
 
-        const payoutDates = allTasks
-            .filter(task => task.status === 'Approved' || task.status === 'PAID')
-            .map(task => new Date(task.updated_at || task.created_at))
+        const payoutDates = payrollEntries
+            .map(entry => new Date(entry.updated_at || entry.created_at))
             .filter(date => !Number.isNaN(date.getTime()));
 
         const allRelevantDates = [...producedDates, ...payoutDates];
@@ -125,9 +124,8 @@ export default function MonthlyBreakdownPage() {
         const productRows = Object.values(productMap)
             .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
 
-        const approvedTasks = allTasks.filter(task => {
-            if (task.status !== 'Approved' && task.status !== 'PAID') return false;
-            const payoutDate = new Date(task.updated_at || task.created_at);
+        const approvedTasks = payrollEntries.filter(entry => {
+            const payoutDate = new Date(entry.updated_at || entry.created_at);
             return isWithinInterval(payoutDate, { start: startDate, end: endDate });
         });
 
@@ -254,7 +252,7 @@ export default function MonthlyBreakdownPage() {
                                 {showAllTailors ? 'Show Top 5' : 'View All'}
                             </Button>
                         )}
-                        <Badge variant="neutral">Approved Pay by Month</Badge>
+                        <Badge variant="neutral">Weekly Payroll Logic by Month</Badge>
                     </div>
                 </div>
                 <div className="overflow-x-auto">
@@ -287,7 +285,7 @@ export default function MonthlyBreakdownPage() {
                             {monthlyTailorPay.rows.length === 0 && (
                                 <tr>
                                     <td colSpan={monthlyTailorPay.months.length + 2} className="px-4 py-8 text-center text-gray-500">
-                                        No approved tailor payouts available for monthly comparison.
+                                        No monthly tailor payouts available for this payroll logic.
                                     </td>
                                 </tr>
                             )}

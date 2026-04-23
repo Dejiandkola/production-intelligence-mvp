@@ -8,7 +8,7 @@ import { Button } from '@/components/UI/Button';
 import { Table, TableRow, TableCell, Badge } from '@/components/UI/Table';
 import { Modal } from '@/components/UI/Modal';
 import { format, startOfDay, endOfDay } from 'date-fns';
-import { Search, FilterX } from 'lucide-react';
+import { Search, FilterX, ChevronDown, Download } from 'lucide-react';
 import ManageItemTasks from './item/[itemId]/QcItemClient';
 import { hasPerm } from '@/lib/permissions';
 
@@ -45,7 +45,7 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
             db.getTailors()
         ]);
         
-        setItems(data.filter(i => i.status !== 'CANCELLED' && i.status !== 'ARCHIVED'));
+        setItems(data.filter(i => i.status !== 'CANCELLED'));
         setRateCard(rc);
         setTailors(t);
         setLoading(false);
@@ -112,6 +112,85 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
         permissions.includes('manage_qc') ||
         (permissions.length > 0 && hasPerm(permissions, 'manage_qc'));
 
+    const getStatusVariant = (status) => {
+        switch (status) {
+            case 'IN_PRODUCTION': return 'brand';
+            case 'OUT_OF_PRODUCTION': return 'success';
+            case 'ARCHIVED': return 'warning';
+            default: return 'neutral';
+        }
+    };
+
+    const getStatusLabel = (status) => {
+        if (status === 'IN_PRODUCTION') return 'In Production';
+        if (status === 'OUT_OF_PRODUCTION') return 'Out of Production';
+        if (status === 'ARCHIVED') return 'Archived';
+        return status;
+    };
+
+    const getStatusSelectClass = (status) => {
+        switch (status) {
+            case 'IN_PRODUCTION':
+                return 'border-sky-200 bg-sky-50 text-sky-800';
+            case 'OUT_OF_PRODUCTION':
+                return 'border-emerald-200 bg-emerald-50 text-emerald-800';
+            default:
+                return 'border-gray-200 bg-white text-gray-700';
+        }
+    };
+
+    const handleStatusChange = async (itemId, newStatus) => {
+        if (!canManageQc) return;
+        await db.updateItemStatus(itemId, newStatus);
+        await loadItems();
+    };
+
+    const handleExport = () => {
+        if (filteredItems.length === 0) {
+            alert('No items match the current filters.');
+            return;
+        }
+
+        const headers = ['Item Key', 'Ticket ID', 'Customer Name', 'Product Type', 'Categories', 'Status', 'Assigned Date'];
+        const rows = filteredItems.map(item => {
+            const assignedCategories = item.work_assignments?.map((wa: any) => wa.category_types?.name).filter(Boolean) || [];
+            const categories = [...new Set(assignedCategories)].join('; ');
+
+            return [
+                item.item_key || '',
+                item.ticket_number || '',
+                item.customer_name || '',
+                item.product_type_name || '',
+                categories,
+                getStatusLabel(item.status),
+                item.assigned_date ? format(new Date(item.assigned_date), 'yyyy-MM-dd') : ''
+            ];
+        });
+
+        const escapeCell = (value) => {
+            const text = String(value ?? '');
+            if (text.includes(',') || text.includes('"') || text.includes('\n')) {
+                return `"${text.replace(/"/g, '""')}"`;
+            }
+            return text;
+        };
+
+        const csv = [headers, ...rows]
+            .map(row => row.map(escapeCell).join(','))
+            .join('\n');
+
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const dateStamp = new Date().toISOString().slice(0, 10);
+        link.href = url;
+        link.download = `qc-items-${dateStamp}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    };
+
     const getCategoryBadgeClass = (categoryName) => {
         const normalized = (categoryName || '').trim().toLowerCase();
 
@@ -140,28 +219,34 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
                     <p className="text-sm text-maison-secondary">Assign tasks and verify quality</p>
                 </div>
 
-                <div className="flex bg-gray-100 p-1 rounded-lg">
-                    <button
-                        onClick={() => setFilter('all')}
-                        className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${filter === 'all' ? 'bg-white shadow text-maison-primary' : 'text-gray-500 hover:text-gray-700'
-                            }`}
-                    >
-                        All Items
-                    </button>
-                    <button
-                        onClick={() => setFilter('unassigned')}
-                        className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${filter === 'unassigned' ? 'bg-white shadow text-maison-primary' : 'text-gray-500 hover:text-gray-700'
-                            }`}
-                    >
-                        Unassigned
-                    </button>
-                    <button
-                        onClick={() => setFilter('in_progress')}
-                        className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${filter === 'in_progress' ? 'bg-white shadow text-maison-primary' : 'text-gray-500 hover:text-gray-700'
-                            }`}
-                    >
-                        In Progress
-                    </button>
+                <div className="flex items-center gap-3">
+                    <Button variant="secondary" onClick={handleExport}>
+                        <Download size={16} className="mr-2" />
+                        Export
+                    </Button>
+                    <div className="flex bg-gray-100 p-1 rounded-lg">
+                        <button
+                            onClick={() => setFilter('all')}
+                            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${filter === 'all' ? 'bg-white shadow text-maison-primary' : 'text-gray-500 hover:text-gray-700'
+                                }`}
+                        >
+                            All Items
+                        </button>
+                        <button
+                            onClick={() => setFilter('unassigned')}
+                            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${filter === 'unassigned' ? 'bg-white shadow text-maison-primary' : 'text-gray-500 hover:text-gray-700'
+                                }`}
+                        >
+                            Unassigned
+                        </button>
+                        <button
+                            onClick={() => setFilter('in_progress')}
+                            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${filter === 'in_progress' ? 'bg-white shadow text-maison-primary' : 'text-gray-500 hover:text-gray-700'
+                                }`}
+                        >
+                            In Progress
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -311,19 +396,29 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
                                 </TableCell>
                                 <TableCell>
                                     <div className="flex gap-2">
-                                        <Badge
-                                            variant={
-                                                item.status === 'IN_PRODUCTION'
-                                                    ? 'brand'
-                                                    : item.status === 'OUT_OF_PRODUCTION'
-                                                        ? 'success'
-                                                        : item.work_assignments?.length
-                                                        ? 'warning'
-                                                        : 'neutral'
-                                            }
-                                        >
-                                            {item.status === 'OUT_OF_PRODUCTION' ? 'Out of Production' : item.status}
-                                        </Badge>
+                                        {canManageQc && item.status !== 'ARCHIVED' ? (
+                                            <div
+                                                className="relative min-w-[190px]"
+                                                onClick={(e) => e.stopPropagation()}
+                                            >
+                                                <select
+                                                    value={item.status}
+                                                    onChange={(e) => handleStatusChange(item.id, e.target.value)}
+                                                    className={`w-full appearance-none rounded-xl border px-4 py-2.5 pr-10 text-sm font-medium shadow-sm transition focus:outline-none focus:ring-2 focus:ring-maison-primary/20 ${getStatusSelectClass(item.status)}`}
+                                                >
+                                                    <option value="IN_PRODUCTION">In Production</option>
+                                                    <option value="OUT_OF_PRODUCTION">Out of Production</option>
+                                                </select>
+                                                <ChevronDown
+                                                    size={16}
+                                                    className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-current opacity-70"
+                                                />
+                                            </div>
+                                        ) : (
+                                            <Badge variant={getStatusVariant(item.status)}>
+                                                {getStatusLabel(item.status)}
+                                            </Badge>
+                                        )}
                                         {item.needs_qc_attention && <Badge variant="warning">Check</Badge>}
                                     </div>
                                 </TableCell>

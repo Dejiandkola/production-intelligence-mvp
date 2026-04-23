@@ -140,6 +140,11 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
     const handleCreateTask = async (e) => {
         e.preventDefault();
 
+        if (item?.status === 'ARCHIVED') {
+            alert("Archived items cannot be assigned tasks.");
+            return;
+        }
+
         if (!canManageQc) {
             alert("Not allowed");
             return;
@@ -190,12 +195,18 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
     };
 
     const handleUpdateTask = async (e) => {
+        e.preventDefault();
+
+        if (item?.status === 'ARCHIVED') {
+            alert("Archived items cannot be edited in QC.");
+            return;
+        }
+
         if (!canManageQc) {
-            e.preventDefault();
             alert("Not allowed");
             return;
         }
-        e.preventDefault();
+
         if (selectedRates.length === 0) {
             alert("Invalid Rate Configuration");
             return;
@@ -218,6 +229,11 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
     };
 
     const handleDeleteTask = async (taskId) => {
+        if (item?.status === 'ARCHIVED') {
+            alert("Archived items cannot be edited in QC.");
+            return;
+        }
+
         if (!canManageQc) return;
 
         if (!window.confirm("Are you sure you want to remove this assigned task?")) return;
@@ -257,6 +273,9 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
             router.push('/qc');
         }
     };
+
+    const isArchivedItem = item.status === 'ARCHIVED';
+    const canEditTasks = canManageQc && !isArchivedItem;
 
     const handleSelectTailor = (tailor, mode) => {
         if (mode === 'edit') {
@@ -318,6 +337,7 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                     <h1 className="text-xl font-serif text-maison-primary flex items-center gap-3">
                         {item.item_key}
                         <Badge variant="neutral">{item.product_type_name}</Badge>
+                        {isArchivedItem && <Badge variant="warning">Archived</Badge>}
                     </h1>
                     <p className="text-sm text-maison-secondary mt-1">
                         Ticket: {item.ticket_number} | Customer: {item.customer_name}
@@ -336,12 +356,18 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                             tailor_id: '',
                         });
                     }
-                }} disabled={!canManageQc}>
+                }} disabled={!canEditTasks} title={isArchivedItem ? 'Archived items cannot be assigned tasks' : undefined}>
                     <Plus size={16} className="mr-2" /> Assign Task
                 </Button>
             </div>
 
-            {showAssignForm && (
+            {isArchivedItem && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                    This item is archived. QC can review existing task history, but task assignment and edits are disabled.
+                </div>
+            )}
+
+            {showAssignForm && !isArchivedItem && (
                 <Card className="border-maison-accent/20 bg-maison-accent/5">
                     <div className="flex justify-between items-center mb-4">
                         <h3 className="font-medium text-maison-primary">Assign New Task</h3>
@@ -516,7 +542,7 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                 </Card>
             )}
 
-            {editingTask && (
+            {editingTask && !isArchivedItem && (
                 <Card className="border-maison-accent/20 bg-maison-accent/5">
                     <div className="flex justify-between items-center mb-4">
                         <h3 className="font-medium text-maison-primary">Edit Task</h3>
@@ -686,8 +712,8 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                                                 setEditTailorSearch(task.tailor_name || '');
                                                 setShowAssignForm(false);
                                             }}
-                                            disabled={!canManageQc}
-                                            className={`p-1 transition-colors ${!canManageQc ? 'text-gray-300 cursor-not-allowed' : 'text-gray-400 hover:text-maison-primary'}`}
+                                            disabled={!canEditTasks}
+                                            className={`p-1 transition-colors ${!canEditTasks ? 'text-gray-300 cursor-not-allowed' : 'text-gray-400 hover:text-maison-primary'}`}
                                             title="Edit Task"
                                         >
                                             <Edit2 size={16} />
@@ -697,8 +723,8 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                                                 e.stopPropagation();
                                                 handleDeleteTask(task.id);
                                             }}
-                                            disabled={!canManageQc}
-                                            className={`p-1 transition-colors ${!canManageQc ? 'text-gray-300 cursor-not-allowed' : 'text-gray-400 hover:text-red-500'}`}
+                                            disabled={!canEditTasks}
+                                            className={`p-1 transition-colors ${!canEditTasks ? 'text-gray-300 cursor-not-allowed' : 'text-gray-400 hover:text-red-500'}`}
                                             title="Remove Task"
                                         >
                                             <Trash2 size={16} />

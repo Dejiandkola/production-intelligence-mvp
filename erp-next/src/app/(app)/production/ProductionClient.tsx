@@ -13,6 +13,8 @@ import { useRouter } from 'next/navigation';
 import { format, startOfDay, endOfDay } from 'date-fns';
 import { CreateItemModal } from '@/components/Production/CreateItemModal';
 
+const PRODUCTION_ASSIGNMENT_CATEGORIES = ['Cutting', 'Airstay Cutting', 'Embroidery'];
+
 export default function ItemList({ canManageProduction, permissions = [] }: { canManageProduction: boolean, permissions?: string[] }) {
     const router = useRouter();
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -29,15 +31,16 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
         endDate: ''
     });
     const [expandedGroups, setExpandedGroups] = useState({});
-    const [activeCutterDialog, setActiveCutterDialog] = useState({ itemId: '', mode: '' });
-    const [cutterForm, setCutterForm] = useState({
+    const [activeAssignmentDialog, setActiveAssignmentDialog] = useState({ itemId: '', mode: '', categoryName: '' });
+    const [assignmentForm, setAssignmentForm] = useState({
         itemId: '',
         assignmentId: '',
         category_type_id: '',
         task_type_id: '',
         tailor_id: '',
     });
-    const [cutterSearch, setCutterSearch] = useState('');
+    const [assignmentCategorySearch, setAssignmentCategorySearch] = useState('');
+    const [assignmentSearch, setAssignmentSearch] = useState('');
 
     useEffect(() => {
         loadPageData();
@@ -113,28 +116,28 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
         return palette[value % palette.length];
     };
 
-    const getCuttingCategoryId = (item) => {
-        const cuttingRate = rateCards.find(rate =>
+    const getCategoryId = (item, categoryName) => {
+        const matchingRate = rateCards.find(rate =>
             rate.product_type_id === item.product_type_id &&
-            rate.category_name?.toLowerCase() === 'cutting'
+            rate.category_name?.toLowerCase() === categoryName.toLowerCase()
         );
 
-        return cuttingRate?.category_type_id || '';
+        return matchingRate?.category_type_id || '';
     };
 
-    const getCuttingAssignment = (item) => {
+    const getCategoryAssignment = (item, categoryName) => {
         return item.work_assignments?.find(assignment =>
-            assignment.category_types?.name?.toLowerCase() === 'cutting'
+            assignment.category_types?.name?.toLowerCase() === categoryName.toLowerCase()
         ) || null;
     };
 
-    const getCuttingTaskOptions = (item) => {
-        const cuttingCategoryId = getCuttingCategoryId(item);
+    const getCategoryTaskOptions = (item, categoryName) => {
+        const categoryId = getCategoryId(item, categoryName);
 
         return rateCards
             .filter(rate =>
                 rate.product_type_id === item.product_type_id &&
-                rate.category_type_id === cuttingCategoryId
+                rate.category_type_id === categoryId
             )
             .map(rate => ({
                 id: rate.task_type_id,
@@ -143,11 +146,44 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
             .filter((option, index, all) => all.findIndex(task => task.id === option.id) === index);
     };
 
+    const getAvailableProductionCategories = (item) => {
+        return PRODUCTION_ASSIGNMENT_CATEGORIES
+            .map((categoryName) => ({
+                name: categoryName,
+                categoryId: getCategoryId(item, categoryName),
+                taskOptions: getCategoryTaskOptions(item, categoryName),
+                assignment: getCategoryAssignment(item, categoryName)
+            }))
+            .filter(category => Boolean(category.categoryId) && category.taskOptions.length > 0);
+    };
+
     const activeTailors = tailors.filter(tailor => tailor.active);
-    const activeCutterItem = items.find(item => item.id === activeCutterDialog.itemId) || null;
-    const filteredCutterTailors = activeTailors.filter(tailor =>
-        tailor.name?.toLowerCase().includes(cutterSearch.trim().toLowerCase())
+    const activeAssignmentItem = items.find(item => item.id === activeAssignmentDialog.itemId) || null;
+    const activeAssignmentCategoryName = activeAssignmentDialog.categoryName || '';
+    const activeAssignmentCategories = activeAssignmentItem ? getAvailableProductionCategories(activeAssignmentItem) : [];
+    const selectableAssignmentCategories = activeAssignmentCategories.filter(category =>
+        activeAssignmentDialog.mode === 'create' ? !category.assignment : Boolean(category.assignment)
     );
+    const filteredAssignmentCategories = selectableAssignmentCategories.filter(category =>
+        category.name.toLowerCase().includes(assignmentCategorySearch.trim().toLowerCase())
+    );
+    const activeAssignmentTaskOptions = activeAssignmentItem && activeAssignmentCategoryName
+        ? getCategoryTaskOptions(activeAssignmentItem, activeAssignmentCategoryName)
+        : [];
+    const filteredAssignmentTailors = activeTailors.filter(tailor =>
+        tailor.name?.toLowerCase().includes(assignmentSearch.trim().toLowerCase())
+    );
+    const isArchivedAssignmentItem = activeAssignmentItem?.status === 'ARCHIVED';
+    const selectedAssignmentTailor = tailors.find(tailor => tailor.id === assignmentForm.tailor_id);
+    const assignmentTailorBand = selectedAssignmentTailor?.band || 'A';
+    const selectedAssignmentRate = rateCards.find(rate =>
+        rate.product_type_id === activeAssignmentItem?.product_type_id &&
+        rate.category_type_id === assignmentForm.category_type_id &&
+        rate.task_type_id === assignmentForm.task_type_id
+    );
+    const assignmentPay = selectedAssignmentRate
+        ? Number(assignmentTailorBand === 'B' ? selectedAssignmentRate.band_b_fee || 0 : selectedAssignmentRate.band_a_fee || 0).toFixed(2)
+        : '0.00';
     const [editingTicket, setEditingTicket] = useState(null);
     const [editCustomerName, setEditCustomerName] = useState('');
 
@@ -194,88 +230,119 @@ const handleDeleteItem = async (id) => {
         }
     };
 
-    const openCutterForm = (item, mode = 'create') => {
-        const cuttingAssignment = getCuttingAssignment(item);
-        const cuttingCategoryId = getCuttingCategoryId(item) || cuttingAssignment?.category_type_id || '';
+    const openAssignmentForm = (item, categoryName = '', mode = 'create') => {
+        const categoryAssignment = getCategoryAssignment(item, categoryName);
+        const categoryId = getCategoryId(item, categoryName) || categoryAssignment?.category_type_id || '';
 
-        setActiveCutterDialog({ itemId: item.id, mode });
-        setCutterForm({
+        setActiveAssignmentDialog({ itemId: item.id, mode, categoryName });
+        setAssignmentForm({
             itemId: item.id,
-            assignmentId: mode === 'edit' ? (cuttingAssignment?.id || '') : '',
-            category_type_id: cuttingCategoryId,
-            task_type_id: mode === 'edit' ? (cuttingAssignment?.task_type_id || '') : '',
-            tailor_id: mode === 'edit' ? (cuttingAssignment?.tailor_id || '') : '',
+            assignmentId: mode === 'edit' ? (categoryAssignment?.id || '') : '',
+            category_type_id: categoryId,
+            task_type_id: mode === 'edit' ? (categoryAssignment?.task_type_id || '') : '',
+            tailor_id: mode === 'edit' ? (categoryAssignment?.tailor_id || '') : '',
         });
-        setCutterSearch(mode === 'edit' ? (cuttingAssignment?.tailors?.name || '') : '');
+        setAssignmentCategorySearch(categoryName);
+        setAssignmentSearch(mode === 'edit' ? (categoryAssignment?.tailors?.name || '') : '');
     };
 
-    const openDeleteCutterDialog = (item) => {
-        const cuttingAssignment = getCuttingAssignment(item);
+    const openDeleteAssignmentDialog = (item, categoryName = '') => {
+        const categoryAssignment = getCategoryAssignment(item, categoryName);
 
-        setActiveCutterDialog({ itemId: item.id, mode: 'delete' });
-        setCutterForm({
+        setActiveAssignmentDialog({ itemId: item.id, mode: 'delete', categoryName });
+        setAssignmentForm({
             itemId: item.id,
-            assignmentId: cuttingAssignment?.id || '',
-            category_type_id: cuttingAssignment?.category_type_id || getCuttingCategoryId(item) || '',
-            task_type_id: cuttingAssignment?.task_type_id || '',
-            tailor_id: cuttingAssignment?.tailor_id || '',
+            assignmentId: categoryAssignment?.id || '',
+            category_type_id: categoryAssignment?.category_type_id || getCategoryId(item, categoryName) || '',
+            task_type_id: categoryAssignment?.task_type_id || '',
+            tailor_id: categoryAssignment?.tailor_id || '',
         });
+        setAssignmentCategorySearch(categoryName);
     };
 
-    const closeCutterDialog = () => {
-        setActiveCutterDialog({ itemId: '', mode: '' });
-        setCutterForm({
+    const closeAssignmentDialog = () => {
+        setActiveAssignmentDialog({ itemId: '', mode: '', categoryName: '' });
+        setAssignmentForm({
             itemId: '',
             assignmentId: '',
             category_type_id: '',
             task_type_id: '',
             tailor_id: '',
         });
-        setCutterSearch('');
+        setAssignmentCategorySearch('');
+        setAssignmentSearch('');
     };
 
-    const handleCreateCutterAssignment = async (item) => {
+    const handleCreateAssignment = async (item) => {
         if (!canManageProduction) return;
+        if (item?.status === 'ARCHIVED') {
+            alert("Archived items cannot be assigned tasks.");
+            return;
+        }
 
-        if (!cutterForm.category_type_id || !cutterForm.task_type_id || !cutterForm.tailor_id) {
-            alert('Please select a cutter and task type.');
+        if (!assignmentForm.category_type_id || !assignmentForm.task_type_id || !assignmentForm.tailor_id) {
+            alert('Please select category, assignee, and task type.');
             return;
         }
 
         await db.createWorkAssignment({
             item_id: item.id,
-            category_type_id: cutterForm.category_type_id,
-            task_type_id: cutterForm.task_type_id,
-            tailor_id: cutterForm.tailor_id
+            category_type_id: assignmentForm.category_type_id,
+            task_type_id: assignmentForm.task_type_id,
+            tailor_id: assignmentForm.tailor_id
         });
 
-        closeCutterDialog();
+        closeAssignmentDialog();
         await loadItems();
     };
 
-    const handleUpdateCutterAssignment = async () => {
+    const handleUpdateAssignment = async () => {
         if (!canManageProduction) return;
-
-        if (!cutterForm.assignmentId || !cutterForm.category_type_id || !cutterForm.task_type_id || !cutterForm.tailor_id) {
-            alert('Please select a cutter and task type.');
+        if (activeAssignmentItem?.status === 'ARCHIVED') {
+            alert("Archived items cannot be edited in Production.");
             return;
         }
 
-        await db.updateWorkAssignment(cutterForm.assignmentId, {
-            category_type_id: cutterForm.category_type_id,
-            task_type_id: cutterForm.task_type_id,
-            tailor_id: cutterForm.tailor_id
+        if (!assignmentForm.assignmentId || !assignmentForm.category_type_id || !assignmentForm.task_type_id || !assignmentForm.tailor_id) {
+            alert('Please select category, assignee, and task type.');
+            return;
+        }
+
+        await db.updateWorkAssignment(assignmentForm.assignmentId, {
+            category_type_id: assignmentForm.category_type_id,
+            task_type_id: assignmentForm.task_type_id,
+            tailor_id: assignmentForm.tailor_id
         });
 
-        closeCutterDialog();
+        closeAssignmentDialog();
         await loadItems();
     };
 
-    const handleDeleteCutterAssignment = async (assignmentId) => {
+    const handleDeleteAssignment = async (assignmentId) => {
         if (!canManageProduction) return;
+        if (activeAssignmentItem?.status === 'ARCHIVED') {
+            alert("Archived items cannot be edited in Production.");
+            return;
+        }
         await db.deleteWorkAssignment(assignmentId);
-        closeCutterDialog();
+        closeAssignmentDialog();
         await loadItems();
+    };
+
+    const handleSelectAssignmentCategory = (item, categoryName) => {
+        const categoryAssignment = getCategoryAssignment(item, categoryName);
+        const categoryId = getCategoryId(item, categoryName) || categoryAssignment?.category_type_id || '';
+
+        setActiveAssignmentDialog(prev => ({ ...prev, categoryName }));
+        setAssignmentCategorySearch(categoryName);
+        setAssignmentForm(prev => ({
+            ...prev,
+            assignmentId: activeAssignmentDialog.mode !== 'create' ? (categoryAssignment?.id || '') : '',
+            category_type_id: categoryId,
+            task_type_id: activeAssignmentDialog.mode !== 'create' ? (categoryAssignment?.task_type_id || '') : '',
+            tailor_id: activeAssignmentDialog.mode !== 'create' ? (categoryAssignment?.tailor_id || '') : '',
+        }));
+        setAssignmentSearch(activeAssignmentDialog.mode !== 'create' ? (categoryAssignment?.tailors?.name || '') : '');
     };
 
     const handleStatusChange = async (itemId, newStatus) => {
@@ -618,10 +685,10 @@ const handleDeleteItem = async (id) => {
                                         {group.items.map((item) => {
                                             const assignedCategories = item.work_assignments?.map(wa => wa.category_types?.name).filter(Boolean) || [];
                                             const uniqueCategories = [...new Set(assignedCategories)];
-                                            const cuttingAssignment = getCuttingAssignment(item);
-                                            const cuttingTaskOptions = getCuttingTaskOptions(item);
-                                            const itemCanAssignCutting = Boolean(getCuttingCategoryId(item)) && cuttingTaskOptions.length > 0;
-                                            const showCuttingControls = Boolean(cuttingAssignment) || itemCanAssignCutting;
+                                            const productionAssignmentCategories = getAvailableProductionCategories(item);
+                                            const hasAssignableProductionCategory = productionAssignmentCategories.some(category => !category.assignment);
+                                            const hasEditableProductionAssignment = productionAssignmentCategories.some(category => category.assignment);
+                                            const canManageItemAssignments = canManageProduction && item.status !== 'ARCHIVED';
 
                                             return (
                                             <TableRow key={item.id}>
@@ -674,35 +741,35 @@ const handleDeleteItem = async (id) => {
                                                     {item.created_at ? format(new Date(item.created_at), 'MMM d, yyyy') : '-'}
                                                 </TableCell>
                                                 <TableCell>
-                                                    <div className="flex items-center gap-2">
-                                                        {canManageProduction && showCuttingControls && (
+                                                    <div className="flex flex-wrap items-center gap-2">
+                                                        {canManageProduction && hasAssignableProductionCategory && (
+                                                            <Button
+                                                                size="sm"
+                                                                variant="secondary"
+                                                                disabled={!canManageItemAssignments}
+                                                                onClick={() => openAssignmentForm(item, '', 'create')}
+                                                            >
+                                                                Assign Task
+                                                            </Button>
+                                                        )}
+                                                        {canManageProduction && hasEditableProductionAssignment && (
                                                             <>
-                                                                {!cuttingAssignment ? (
-                                                                    <Button
-                                                                        size="sm"
-                                                                        variant="secondary"
-                                                                        onClick={() => openCutterForm(item, 'create')}
-                                                                    >
-                                                                        Assign Cutter
-                                                                    </Button>
-                                                                ) : (
-                                                                    <>
-                                                                        <Button
-                                                                            size="sm"
-                                                                            variant="secondary"
-                                                                            onClick={() => openCutterForm(item, 'edit')}
-                                                                        >
-                                                                            Edit Cutter
-                                                                        </Button>
-                                                                        <Button
-                                                                            size="sm"
-                                                                            variant="danger"
-                                                                            onClick={() => openDeleteCutterDialog(item)}
-                                                                        >
-                                                                            Delete Cutter
-                                                                        </Button>
-                                                                    </>
-                                                                )}
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="secondary"
+                                                                    disabled={!canManageItemAssignments}
+                                                                    onClick={() => openAssignmentForm(item, '', 'edit')}
+                                                                >
+                                                                    Edit Task
+                                                                </Button>
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="danger"
+                                                                    disabled={!canManageItemAssignments}
+                                                                    onClick={() => openDeleteAssignmentDialog(item, '')}
+                                                                >
+                                                                    Delete Task
+                                                                </Button>
                                                             </>
                                                         )}
 
@@ -742,108 +809,225 @@ const handleDeleteItem = async (id) => {
             )}
 
             <Modal
-                isOpen={Boolean(activeCutterDialog.itemId)}
-                onClose={closeCutterDialog}
+                isOpen={Boolean(activeAssignmentDialog.itemId)}
+                onClose={closeAssignmentDialog}
                 title={
-                    activeCutterDialog.mode === 'create'
-                        ? 'Assign Cutter'
-                        : activeCutterDialog.mode === 'edit'
-                            ? 'Edit Cutter'
-                            : 'Delete Cutter'
+                    activeAssignmentDialog.mode === 'create'
+                        ? 'Assign Task'
+                        : activeAssignmentDialog.mode === 'edit'
+                            ? 'Edit Task'
+                            : 'Delete Task'
                 }
-                maxWidth="max-w-md"
+                maxWidth="max-w-4xl"
             >
-                {activeCutterItem && (
+                {activeAssignmentItem && (
                     <div className="mb-4 rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
                         <div className="flex items-center gap-3">
-                            <span className="font-mono text-xs text-maison-primary">{activeCutterItem.item_key}</span>
-                            <Badge variant="neutral">{activeCutterItem.product_type_name}</Badge>
+                            <span className="font-mono text-xs text-maison-primary">{activeAssignmentItem.item_key}</span>
+                            <Badge variant="neutral">{activeAssignmentItem.product_type_name}</Badge>
+                            {isArchivedAssignmentItem && <Badge variant="warning">Archived</Badge>}
                         </div>
                         <p className="mt-1 text-sm text-maison-secondary">
-                            Ticket: {activeCutterItem.ticket_number} | Customer: {activeCutterItem.customer_name}
+                            Ticket: {activeAssignmentItem.ticket_number} | Customer: {activeAssignmentItem.customer_name}
                         </p>
                     </div>
                 )}
 
-                {activeCutterDialog.mode === 'delete' ? (
+                {isArchivedAssignmentItem && (
+                    <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                        This item is archived. Production can review assignment history, but task assignment and edits are disabled.
+                    </div>
+                )}
+
+                {activeAssignmentDialog.mode === 'delete' ? (
                     <div className="space-y-4">
-                        <p className="text-sm text-gray-600">Remove this cutting assignment from the item?</p>
+                        <div className="space-y-2">
+                            <input
+                                type="text"
+                                value={assignmentCategorySearch}
+                                onChange={(e) => {
+                                    setAssignmentCategorySearch(e.target.value);
+                                    setActiveAssignmentDialog(prev => ({ ...prev, categoryName: '' }));
+                                    setAssignmentForm(prev => ({
+                                        ...prev,
+                                        assignmentId: '',
+                                        category_type_id: '',
+                                        task_type_id: '',
+                                        tailor_id: ''
+                                    }));
+                                    setAssignmentSearch('');
+                                }}
+                                placeholder="Type category name..."
+                                className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-maison-primary/20"
+                            />
+                            <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white">
+                                {filteredAssignmentCategories.length > 0 ? filteredAssignmentCategories.map(category => (
+                                    <button
+                                        key={category.name}
+                                        type="button"
+                                        onClick={() => handleSelectAssignmentCategory(activeAssignmentItem, category.name)}
+                                        className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50"
+                                    >
+                                        <span>{category.name}</span>
+                                    </button>
+                                )) : (
+                                    <div className="px-3 py-2 text-sm text-gray-500">No matching assigned categories found.</div>
+                                )}
+                            </div>
+                        </div>
+                        <p className="text-sm text-gray-600">
+                            {activeAssignmentCategoryName
+                                ? `Remove this ${activeAssignmentCategoryName.toLowerCase()} assignment from the item?`
+                                : 'Select a category to remove its assignment from the item.'}
+                        </p>
                         <div className="flex justify-end gap-2">
-                            <Button size="sm" variant="ghost" onClick={closeCutterDialog}>
+                            <Button size="sm" variant="ghost" onClick={closeAssignmentDialog}>
                                 Cancel
                             </Button>
                             <Button
                                 size="sm"
                                 variant="danger"
-                                onClick={() => handleDeleteCutterAssignment(cutterForm.assignmentId)}
+                                disabled={!assignmentForm.assignmentId || isArchivedAssignmentItem}
+                                onClick={() => handleDeleteAssignment(assignmentForm.assignmentId)}
                             >
-                                Delete Cutter
+                                Delete Task
                             </Button>
                         </div>
                     </div>
                 ) : (
                     <div className="space-y-4">
-                        <div className="space-y-2">
-                            <input
-                                type="text"
-                                value={cutterSearch}
-                                onChange={(e) => {
-                                    setCutterSearch(e.target.value);
-                                    setCutterForm(prev => ({ ...prev, tailor_id: '' }));
-                                }}
-                                placeholder="Type cutter name..."
-                                className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-maison-primary/20"
-                            />
-                            <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white">
-                                {filteredCutterTailors.length > 0 ? filteredCutterTailors.map(tailor => (
-                                    <button
-                                        key={tailor.id}
-                                        type="button"
-                                        onClick={() => {
-                                            setCutterForm(prev => ({ ...prev, tailor_id: tailor.id }));
-                                            setCutterSearch(tailor.name);
+                        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                            <div>
+                                <label className="mb-1.5 block text-sm font-medium text-maison-secondary">Category</label>
+                                <div className="space-y-2">
+                                    <input
+                                        type="text"
+                                        value={assignmentCategorySearch}
+                                        onChange={(e) => {
+                                            setAssignmentCategorySearch(e.target.value);
+                                            setActiveAssignmentDialog(prev => ({ ...prev, categoryName: '' }));
+                                            setAssignmentForm(prev => ({
+                                                ...prev,
+                                                assignmentId: '',
+                                                category_type_id: '',
+                                                task_type_id: '',
+                                                tailor_id: ''
+                                            }));
+                                            setAssignmentSearch('');
                                         }}
-                                        className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50"
-                                    >
-                                        <span>{tailor.name}</span>
-                                        <span className="text-xs text-gray-500">Band {tailor.band || 'A'}</span>
-                                    </button>
-                                )) : (
-                                    <div className="px-3 py-2 text-sm text-gray-500">No matching cutters found.</div>
-                                )}
+                                        placeholder="Type category name..."
+                                        disabled={isArchivedAssignmentItem}
+                                        className="block w-full rounded-lg border-gray-200 shadow-sm sm:text-sm py-2.5"
+                                    />
+                                    <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white">
+                                        {filteredAssignmentCategories.length > 0 ? filteredAssignmentCategories.map(category => (
+                                            <button
+                                                key={category.name}
+                                                type="button"
+                                                onClick={() => handleSelectAssignmentCategory(activeAssignmentItem, category.name)}
+                                                className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50"
+                                            >
+                                                <span>{category.name}</span>
+                                                {category.assignment && <span className="text-xs text-gray-500">Assigned</span>}
+                                            </button>
+                                        )) : (
+                                            <div className="px-3 py-2 text-sm text-gray-500">
+                                                {activeAssignmentDialog.mode === 'create'
+                                                    ? 'No categories available to assign.'
+                                                    : 'No matching assigned categories found.'}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="mb-1.5 block text-sm font-medium text-maison-secondary">Assignee</label>
+                                <div className="space-y-2">
+                                    <input
+                                        type="text"
+                                        value={assignmentSearch}
+                                        onChange={(e) => {
+                                            setAssignmentSearch(e.target.value);
+                                            setAssignmentForm(prev => ({ ...prev, tailor_id: '' }));
+                                        }}
+                                        placeholder={activeAssignmentCategoryName ? `Type ${activeAssignmentCategoryName.toLowerCase()} assignee name...` : 'Select category first...'}
+                                        disabled={!activeAssignmentCategoryName || isArchivedAssignmentItem}
+                                        className="block w-full rounded-lg border-gray-200 shadow-sm sm:text-sm py-2.5"
+                                    />
+                                    <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white">
+                                        {!activeAssignmentCategoryName ? (
+                                            <div className="px-3 py-2 text-sm text-gray-500">Select a category first.</div>
+                                        ) : filteredAssignmentTailors.length > 0 ? filteredAssignmentTailors.map(tailor => (
+                                            <button
+                                                key={tailor.id}
+                                                type="button"
+                                                onClick={() => {
+                                                    setAssignmentForm(prev => ({ ...prev, tailor_id: tailor.id }));
+                                                    setAssignmentSearch(tailor.name);
+                                                }}
+                                                className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50"
+                                            >
+                                                <span>{tailor.name}</span>
+                                                <span className="text-xs text-gray-500">Band {tailor.band || 'A'}</span>
+                                            </button>
+                                        )) : (
+                                            <div className="px-3 py-2 text-sm text-gray-500">No matching assignees found.</div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="mb-1.5 block text-sm font-medium text-maison-secondary">Task Type</label>
+                                <select
+                                    value={assignmentForm.task_type_id}
+                                    onChange={(e) => setAssignmentForm(prev => ({ ...prev, task_type_id: e.target.value }))}
+                                    disabled={!activeAssignmentCategoryName || isArchivedAssignmentItem}
+                                    className="block w-full rounded-lg border-gray-200 shadow-sm sm:text-sm py-2.5"
+                                >
+                                    <option value="">{activeAssignmentCategoryName ? `Select ${activeAssignmentCategoryName} Task...` : 'Select Category First'}</option>
+                                    {activeAssignmentTaskOptions.map(task => (
+                                        <option key={task.id} value={task.id}>
+                                            {task.name}
+                                        </option>
+                                    ))}
+                                </select>
                             </div>
                         </div>
-                        <select
-                            value={cutterForm.task_type_id}
-                            onChange={(e) => setCutterForm(prev => ({ ...prev, task_type_id: e.target.value }))}
-                            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-maison-primary/20"
-                        >
-                            <option value="">Select Cutting Task...</option>
-                            {activeCutterItem
-                                ? getCuttingTaskOptions(activeCutterItem).map(task => (
-                                    <option key={task.id} value={task.id}>
-                                        {task.name}
-                                    </option>
-                                ))
-                                : null}
-                        </select>
+
+                        <div className="rounded-lg border border-gray-100 bg-white p-4 shadow-sm">
+                            <div className="mb-1 flex justify-between text-sm">
+                                <span className="text-gray-500">Category:</span>
+                                <span className="font-medium">{activeAssignmentCategoryName || '-'}</span>
+                            </div>
+                            <div className="mb-1 flex justify-between text-sm">
+                                <span className="text-gray-500">Pay Band:</span>
+                                <span className="font-medium">Band {assignmentTailorBand}</span>
+                            </div>
+                            <div className="mt-2 flex justify-between border-t border-gray-100 pt-2 text-sm font-bold text-maison-primary">
+                                <span>Task Price:</span>
+                                <span>NGN {assignmentPay}</span>
+                            </div>
+                        </div>
                         <div className="flex justify-end gap-2">
-                            <Button size="sm" variant="ghost" onClick={closeCutterDialog}>
+                            <Button size="sm" variant="ghost" onClick={closeAssignmentDialog}>
                                 Cancel
                             </Button>
                             <Button
                                 size="sm"
+                                disabled={!activeAssignmentCategoryName || isArchivedAssignmentItem}
                                 onClick={() => {
-                                    const item = items.find(entry => entry.id === activeCutterDialog.itemId);
+                                    const item = items.find(entry => entry.id === activeAssignmentDialog.itemId);
                                     if (!item) return;
-                                    if (activeCutterDialog.mode === 'edit') {
-                                        handleUpdateCutterAssignment();
+                                    if (activeAssignmentDialog.mode === 'edit') {
+                                        handleUpdateAssignment();
                                     } else {
-                                        handleCreateCutterAssignment(item);
+                                        handleCreateAssignment(item);
                                     }
                                 }}
                             >
-                                {activeCutterDialog.mode === 'edit' ? 'Save' : 'Assign'}
+                                {activeAssignmentDialog.mode === 'edit' ? 'Save' : 'Assign'}
                             </Button>
                         </div>
                     </div>
