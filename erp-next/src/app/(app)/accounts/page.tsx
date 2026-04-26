@@ -10,15 +10,22 @@ import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
 import { Badge, Table, TableCell, TableRow } from '@/components/UI/Table';
 
+const TAILOR_PAGE_SIZE = 25;
+
 export default function PendingVerification() {
     const router = useRouter();
     const [authorized, setAuthorized] = useState(false);
     const [accessDenied, setAccessDenied] = useState(false);
     const [tasks, setTasks] = useState([]);
+    const [totalCount, setTotalCount] = useState(0);
+    const [page, setPage] = useState(1);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState('');
     const [filter, setFilter] = useState('pending');
     const [reversingTaskId, setReversingTaskId] = useState(null);
     const [expandedGroups, setExpandedGroups] = useState({});
+    const [taskOptions, setTaskOptions] = useState([]);
+    const [categoryOptions, setCategoryOptions] = useState([]);
 
     const [searchCustomer, setSearchCustomer] = useState('');
     const [searchTicket, setSearchTicket] = useState('');
@@ -56,17 +63,61 @@ export default function PendingVerification() {
     };
 
     useEffect(() => {
-        if (authorized) loadTasks();
+        if (authorized) {
+            loadFilterOptions();
+        }
     }, [authorized]);
+
+    useEffect(() => {
+        if (authorized) {
+            loadTasks();
+        }
+    }, [authorized, filter, searchCustomer, searchTicket, searchTailor, searchTask, searchCategory, minAmount, maxAmount, dateFrom, dateTo, page]);
+
+    const loadFilterOptions = async () => {
+        try {
+            const [taskTypes, categories] = await Promise.all([
+                db.getTaskTypes(),
+                db.getCategories(),
+            ]);
+            setTaskOptions(taskTypes.map(task => task.name).filter(Boolean).sort());
+            setCategoryOptions(categories.map(category => category.name).filter(Boolean).sort());
+        } catch (error) {
+            console.error(error);
+        }
+    };
 
     const loadTasks = async () => {
         setLoading(true);
-        const data = await db.getTasks();
-        setTasks(data);
-        setLoading(false);
+        setLoadError('');
+
+        try {
+            const result = await db.getAccountTasks({
+                filter,
+                searchCustomer,
+                searchTicket,
+                searchTailor,
+                searchTask,
+                searchCategory,
+                minAmount,
+                maxAmount,
+                dateFrom,
+                dateTo,
+            }, page, TAILOR_PAGE_SIZE);
+            setTasks(result.data);
+            setTotalCount(result.count);
+        } catch (error) {
+            console.error(error);
+            setTasks([]);
+            setTotalCount(0);
+            setLoadError(error?.message || 'Unable to load account tasks.');
+        } finally {
+            setLoading(false);
+        }
     };
 
     const clearSearch = () => {
+        setPage(1);
         setSearchCustomer('');
         setSearchTicket('');
         setSearchTailor('');
@@ -82,68 +133,37 @@ export default function PendingVerification() {
         searchCustomer || searchTicket || searchTailor || searchTask || searchCategory ||
         minAmount || maxAmount || dateFrom || dateTo;
 
-    const taskOptions = useMemo(() => {
-        return [...new Set(tasks.map(task => task.task_type_name).filter(Boolean))].sort();
-    }, [tasks]);
-
-    const categoryOptions = useMemo(() => {
-        return [...new Set(tasks.map(task => task.category_name).filter(Boolean))].sort();
-    }, [tasks]);
-
     const hasReversalRecord = (task) => Boolean(
         task.reversal_reason ||
         task.reversal_notes ||
         (typeof task.notes === 'string' && task.notes.includes('Reversal:'))
     );
 
-    const filteredTasks = useMemo(() => {
-        return tasks.filter(task => {
-            if (filter === 'pending' && task.status !== 'CREATED') return false;
-            if (filter === 'approved' && task.status !== 'Approved' && task.status !== 'PAID') return false;
-            if (filter === 'rejected' && task.status !== 'Rejected') return false;
-            if (filter === 'reversed' && !hasReversalRecord(task)) return false;
-
-            if (searchCustomer && !task.customer_name?.toLowerCase().includes(searchCustomer.toLowerCase())) return false;
-            if (searchTicket && !task.item_key?.toLowerCase().includes(searchTicket.toLowerCase())) return false;
-            if (searchTailor && !task.tailor_name?.toLowerCase().includes(searchTailor.toLowerCase())) return false;
-            if (searchTask && task.task_type_name !== searchTask) return false;
-            if (searchCategory && task.category_name !== searchCategory) return false;
-
-            const amount = parseFloat(task.pay_amount || 0);
-            if (minAmount !== '' && amount < parseFloat(minAmount)) return false;
-            if (maxAmount !== '' && amount > parseFloat(maxAmount)) return false;
-
-            if (dateFrom || dateTo) {
-                const taskDate = new Date(task.created_at);
-                if (dateFrom && taskDate < new Date(dateFrom)) return false;
-                if (dateTo) {
-                    const end = new Date(dateTo);
-                    end.setHours(23, 59, 59, 999);
-                    if (taskDate > end) return false;
-                }
-            }
-
-            return true;
-        });
-    }, [tasks, filter, searchCustomer, searchTicket, searchTailor, searchTask, searchCategory, minAmount, maxAmount, dateFrom, dateTo]);
+    const filteredTasks = tasks;
 
     const groupedTasks = useMemo(() => {
         const groups = filteredTasks.reduce((acc, task) => {
             const tailorName = task.tailor_name || 'Unassigned';
+            const tailorKey = task.tailor_group_key || task.tailor_id || tailorName;
 
-            if (!acc[tailorName]) {
-                acc[tailorName] = {
+            if (!acc[tailorKey]) {
+                acc[tailorKey] = {
+                    tailorKey,
                     tailorName,
                     tasks: [],
                 };
             }
 
-            acc[tailorName].tasks.push(task);
+            acc[tailorKey].tasks.push(task);
             return acc;
         }, {});
 
         return Object.values(groups).sort((a, b) => a.tailorName.localeCompare(b.tailorName));
     }, [filteredTasks]);
+
+    const totalPages = Math.max(1, Math.ceil(totalCount / TAILOR_PAGE_SIZE));
+    const pageStart = totalCount === 0 ? 0 : ((page - 1) * TAILOR_PAGE_SIZE) + 1;
+    const pageEnd = Math.min(page * TAILOR_PAGE_SIZE, totalCount);
 
     const toggleGroup = (tailorName) => {
         setExpandedGroups(prev => ({
@@ -303,7 +323,10 @@ export default function PendingVerification() {
                     {['all', 'pending', 'approved', 'rejected', 'reversed'].map(tab => (
                         <button
                             key={tab}
-                            onClick={() => setFilter(tab)}
+                            onClick={() => {
+                                setPage(1);
+                                setFilter(tab);
+                            }}
                             className={`rounded-md px-4 py-1.5 text-sm font-medium transition-all ${
                                 filter === tab
                                     ? 'bg-white text-maison-primary shadow'
@@ -325,7 +348,10 @@ export default function PendingVerification() {
                                 type="text"
                                 placeholder="Customer name"
                                 value={searchCustomer}
-                                onChange={(e) => setSearchCustomer(e.target.value)}
+                                onChange={(e) => {
+                                    setPage(1);
+                                    setSearchCustomer(e.target.value);
+                                }}
                                 className="w-full rounded-md border border-gray-200 py-2 pl-8 pr-3 text-sm focus:outline-none focus:ring-1 focus:ring-maison-primary"
                             />
                         </div>
@@ -336,7 +362,10 @@ export default function PendingVerification() {
                                 type="text"
                                 placeholder="Ticket / Item key"
                                 value={searchTicket}
-                                onChange={(e) => setSearchTicket(e.target.value)}
+                                onChange={(e) => {
+                                    setPage(1);
+                                    setSearchTicket(e.target.value);
+                                }}
                                 className="w-full rounded-md border border-gray-200 py-2 pl-8 pr-3 text-sm focus:outline-none focus:ring-1 focus:ring-maison-primary"
                             />
                         </div>
@@ -347,14 +376,20 @@ export default function PendingVerification() {
                                 type="text"
                                 placeholder="Tailor name"
                                 value={searchTailor}
-                                onChange={(e) => setSearchTailor(e.target.value)}
+                                onChange={(e) => {
+                                    setPage(1);
+                                    setSearchTailor(e.target.value);
+                                }}
                                 className="w-full rounded-md border border-gray-200 py-2 pl-8 pr-3 text-sm focus:outline-none focus:ring-1 focus:ring-maison-primary"
                             />
                         </div>
 
                         <select
                             value={searchTask}
-                            onChange={(e) => setSearchTask(e.target.value)}
+                            onChange={(e) => {
+                                setPage(1);
+                                setSearchTask(e.target.value);
+                            }}
                             className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-maison-primary"
                         >
                             <option value="">All tasks</option>
@@ -365,7 +400,10 @@ export default function PendingVerification() {
 
                         <select
                             value={searchCategory}
-                            onChange={(e) => setSearchCategory(e.target.value)}
+                            onChange={(e) => {
+                                setPage(1);
+                                setSearchCategory(e.target.value);
+                            }}
                             className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-maison-primary"
                         >
                             <option value="">All categories</option>
@@ -382,7 +420,10 @@ export default function PendingVerification() {
                                 type="number"
                                 placeholder="Min"
                                 value={minAmount}
-                                onChange={(e) => setMinAmount(e.target.value)}
+                                onChange={(e) => {
+                                    setPage(1);
+                                    setMinAmount(e.target.value);
+                                }}
                                 className="w-24 rounded-md border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-maison-primary"
                             />
                             <span className="text-xs text-gray-400">-</span>
@@ -390,7 +431,10 @@ export default function PendingVerification() {
                                 type="number"
                                 placeholder="Max"
                                 value={maxAmount}
-                                onChange={(e) => setMaxAmount(e.target.value)}
+                                onChange={(e) => {
+                                    setPage(1);
+                                    setMaxAmount(e.target.value);
+                                }}
                                 className="w-24 rounded-md border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-maison-primary"
                             />
                         </div>
@@ -400,14 +444,20 @@ export default function PendingVerification() {
                             <input
                                 type="date"
                                 value={dateFrom}
-                                onChange={(e) => setDateFrom(e.target.value)}
+                                onChange={(e) => {
+                                    setPage(1);
+                                    setDateFrom(e.target.value);
+                                }}
                                 className="rounded-md border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-maison-primary"
                             />
                             <span className="text-xs text-gray-400">-</span>
                             <input
                                 type="date"
                                 value={dateTo}
-                                onChange={(e) => setDateTo(e.target.value)}
+                                onChange={(e) => {
+                                    setPage(1);
+                                    setDateTo(e.target.value);
+                                }}
                                 className="rounded-md border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-maison-primary"
                             />
                         </div>
@@ -423,15 +473,45 @@ export default function PendingVerification() {
                         )}
 
                         <span className="ml-auto text-xs text-gray-400">
-                            {filteredTasks.length} result{filteredTasks.length !== 1 ? 's' : ''}
+                            {loading ? 'Loading...' : `${pageStart}-${pageEnd} of ${totalCount} tailor group${totalCount !== 1 ? 's' : ''}`}
                         </span>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-3 border-t border-gray-100 pt-3">
+                        <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={loading || page <= 1}
+                            onClick={() => setPage(prev => Math.max(1, prev - 1))}
+                        >
+                            Previous
+                        </Button>
+                        <span className="text-xs text-gray-500">
+                            Page {page} of {totalPages}
+                        </span>
+                        <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={loading || page >= totalPages}
+                            onClick={() => setPage(prev => Math.min(totalPages, prev + 1))}
+                        >
+                            Next
+                        </Button>
                     </div>
                 </div>
             </Card>
 
+            {loadError && (
+                <Card>
+                    <div className="px-6 py-4 text-sm text-red-600">
+                        {loadError}
+                    </div>
+                </Card>
+            )}
+
             <div className="space-y-4">
                 {groupedTasks.map((group) => {
-                    const isExpanded = expandedGroups[group.tailorName] ?? true;
+                    const isExpanded = expandedGroups[group.tailorKey] ?? true;
                     const decidedCount = group.tasks.filter(task =>
                         task.status === 'Approved' || task.status === 'Rejected' || task.status === 'PAID'
                     ).length;
@@ -441,9 +521,9 @@ export default function PendingVerification() {
                     const totalPayable = group.tasks.reduce((sum, task) => sum + parseFloat(task.pay_amount || 0), 0);
 
                     return (
-                        <Card key={group.tailorName} padding="p-0" className="overflow-hidden">
+                        <Card key={group.tailorKey} padding="p-0" className="overflow-hidden">
                             <button
-                                onClick={() => toggleGroup(group.tailorName)}
+                                onClick={() => toggleGroup(group.tailorKey)}
                                 className="flex w-full items-center justify-between px-5 py-4 text-left transition-colors hover:bg-gray-50"
                             >
                                 <div className="flex items-center gap-3">

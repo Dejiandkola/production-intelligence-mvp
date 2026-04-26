@@ -7,14 +7,20 @@ import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
 import { Table, TableRow, TableCell, Badge } from '@/components/UI/Table';
 import { Modal } from '@/components/UI/Modal';
-import { format, startOfDay, endOfDay } from 'date-fns';
+import { format } from 'date-fns';
 import { Search, FilterX, ChevronDown, Download } from 'lucide-react';
 import ManageItemTasks from './item/[itemId]/QcItemClient';
 import { hasPerm } from '@/lib/permissions';
 
+const QC_PAGE_SIZE = 50;
+const ITEM_STATUS_OPTIONS = ['IN_PRODUCTION', 'OUT_OF_PRODUCTION', 'ARCHIVED'];
+
 export default function QCQueue({ permissions = [] }: { permissions?: string[] }) {
     const [items, setItems] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const [page, setPage] = useState(1);
+    const [totalTickets, setTotalTickets] = useState(0);
     const [filter, setFilter] = useState('all'); // all, unassigned, in_progress
 
     const [filters, setFilters] = useState({
@@ -29,84 +35,60 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
 
     const [rateCard, setRateCard] = useState([]);
     const [tailors, setTailors] = useState([]);
+    const [productTypes, setProductTypes] = useState([]);
+    const [categoryOptions, setCategoryOptions] = useState([]);
 
     const [selectedItemId, setSelectedItemId] = useState(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
 
     useEffect(() => {
-        loadItems();
-    }, []);
+        loadItems({ reset: true });
+    }, [filter, filters]);
 
-    const loadItems = async () => {
-        setLoading(true);
-        const [data, rc, t] = await Promise.all([
-            db.getItems(),
-            db.getRates(),
-            db.getTailors()
-        ]);
-        
-        setItems(data.filter(i => i.status !== 'CANCELLED'));
-        setRateCard(rc);
-        setTailors(t);
-        setLoading(false);
+    const loadItems = async ({ reset = true } = {}) => {
+        const nextPage = reset ? 1 : page + 1;
+        if (reset) setLoading(true);
+        else setLoadingMore(true);
+
+        try {
+            const assignmentFilter = filter === 'all' ? '' : filter;
+            const [result, rc, t, productTypesData, categoriesData] = await Promise.all([
+                db.getTicketPaginatedItems(filters, nextPage, QC_PAGE_SIZE, { excludeCancelled: true }),
+                reset ? db.getRates() : Promise.resolve(rateCard),
+                reset ? db.getTailors() : Promise.resolve(tailors),
+                reset ? db.getProductTypes() : Promise.resolve(productTypes),
+                reset ? db.getCategories() : Promise.resolve(categoryOptions.map(name => ({ name })))
+            ]);
+
+            const filteredByAssignment = result.items.filter(item => {
+                const assignmentCount = item.work_assignments?.length || 0;
+                if (assignmentFilter === 'unassigned') return assignmentCount === 0;
+                if (assignmentFilter === 'in_progress') return assignmentCount > 0;
+                return true;
+            });
+
+            setItems(prev => reset ? filteredByAssignment : [...prev, ...filteredByAssignment]);
+            setTotalTickets(result.totalTickets);
+            setPage(nextPage);
+            if (reset) {
+                setRateCard(rc);
+                setTailors(t);
+                setProductTypes(productTypesData);
+                setCategoryOptions(categoriesData.map(category => category.name).filter(Boolean).sort());
+            }
+        } finally {
+            setLoading(false);
+            setLoadingMore(false);
+        }
     };
 
-    const tabFilteredItems = items.filter(item => {
-        const assignmentCount = item.work_assignments?.length || 0;
-        if (filter === 'unassigned') return assignmentCount === 0;
-        if (filter === 'in_progress') return assignmentCount > 0;
-        return true;
-    });
+    const tabFilteredItems = items;
 
-    const uniqueProductTypes = [...new Set(tabFilteredItems.map(i => i.product_type_name))].filter(Boolean);
-    const uniqueStatuses = [...new Set(tabFilteredItems.map(i => i.status))].filter(Boolean);
-    const uniqueCategories = [...new Set(
-        tabFilteredItems.flatMap(item =>
-            item.work_assignments?.map((wa: any) => wa.category_types?.name).filter(Boolean) || []
-        )
-    )].filter(Boolean);
+    const uniqueProductTypes = productTypes.map(productType => productType.name).filter(Boolean);
+    const uniqueStatuses = ITEM_STATUS_OPTIONS;
+    const uniqueCategories = categoryOptions;
 
-    const filteredItems = tabFilteredItems.filter(item => {
-        let match = true;
-
-        if (filters.ticketId && !item.ticket_number?.toLowerCase().includes(filters.ticketId.toLowerCase())) {
-            match = false;
-        }
-
-        if (filters.customerName && !item.customer_name?.toLowerCase().includes(filters.customerName.toLowerCase())) {
-            match = false;
-        }
-
-        if (filters.productType && item.product_type_name !== filters.productType) {
-            match = false;
-        }
-
-        if (filters.category) {
-            const hasMatchingCategory = item.work_assignments?.some((wa: any) => wa.category_types?.name === filters.category);
-            if (!hasMatchingCategory) {
-                match = false;
-            }
-        }
-
-        if (filters.status && item.status !== filters.status) {
-            match = false;
-        }
-
-        if (filters.startDate || filters.endDate) {
-            const itemDate = item.created_at ? new Date(item.created_at) : null;
-
-            if (itemDate) {
-                if (filters.startDate && itemDate < startOfDay(new Date(filters.startDate))) {
-                    match = false;
-                }
-                if (filters.endDate && itemDate > endOfDay(new Date(filters.endDate))) {
-                    match = false;
-                }
-            }
-        }
-
-        return match;
-    });
+    const filteredItems = tabFilteredItems;
 
     const canManageQc =
         permissions.includes('manage_qc') ||
@@ -438,6 +420,19 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
                     )}
                 </Table>
             </Card>
+
+            {page * QC_PAGE_SIZE < totalTickets && (
+                <div className="flex justify-center py-4">
+                    <Button
+                        variant="secondary"
+                        disabled={loadingMore}
+                        isLoading={loadingMore}
+                        onClick={() => loadItems({ reset: false })}
+                    >
+                        Load More
+                    </Button>
+                </div>
+            )}
 
             <Modal
                 isOpen={isModalOpen}

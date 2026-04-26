@@ -7,11 +7,18 @@ import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
 import { Table, TableRow, TableCell, Badge } from '@/components/UI/Table';
 import { PackageCheck, ChevronDown, ChevronRight, Search, FilterX } from 'lucide-react';
-import { format, startOfDay, endOfDay } from 'date-fns';
+import { format } from 'date-fns';
+
+const TICKET_PAGE_SIZE = 50;
+const RECEIVING_STATUS_OPTIONS = ['Received', 'Not Received'];
 
 export default function Receiving({ canManageCompletion }: { canManageCompletion: boolean }) {
     const [items, setItems] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const [page, setPage] = useState(1);
+    const [totalTickets, setTotalTickets] = useState(0);
+    const [productTypes, setProductTypes] = useState([]);
     // Maintain the default 'Available' filter state by pre-setting status to 'Assigned by QC'
     const [filters, setFilters] = useState({
         ticketId: '',
@@ -24,35 +31,37 @@ export default function Receiving({ canManageCompletion }: { canManageCompletion
     const [expandedGroups, setExpandedGroups] = useState({});
 
     useEffect(() => {
-        loadItems();
-    }, []);
+        loadItems({ reset: true });
+    }, [filters]);
 
-    const loadItems = async () => {
-        setLoading(true);
-        const data = await db.getItems();
-        setItems(data.filter(i => i.status !== 'CANCELLED' && i.status !== 'ARCHIVED'));
-        setLoading(false);
+    const loadItems = async ({ reset = true } = {}) => {
+        const nextPage = reset ? 1 : page + 1;
+        if (reset) setLoading(true);
+        else setLoadingMore(true);
+
+        try {
+            const [result, productTypesData] = await Promise.all([
+                db.getTicketPaginatedItems({
+                    ...filters,
+                    receivingStatus: filters.status,
+                    status: ''
+                }, nextPage, TICKET_PAGE_SIZE, { excludeCancelled: true, excludeArchived: true }),
+                reset ? db.getProductTypes() : Promise.resolve(productTypes)
+            ]);
+            setItems(prev => reset ? result.items : [...prev, ...result.items]);
+            setTotalTickets(result.totalTickets);
+            setPage(nextPage);
+            if (reset) setProductTypes(productTypesData);
+        } finally {
+            setLoading(false);
+            setLoadingMore(false);
+        }
     };
 
-    const uniqueProductTypes = [...new Set(items.map(i => i.product_type_name))].filter(Boolean);
-    const uniqueStatuses = [...new Set(items.map(i => i.receiving_status))].filter(Boolean);
+    const uniqueProductTypes = productTypes.map(productType => productType.name).filter(Boolean);
+    const uniqueStatuses = RECEIVING_STATUS_OPTIONS;
 
-    const filteredItems = items.filter(item => {
-        let match = true;
-
-        if (filters.ticketId && !item.ticket_number?.toLowerCase().includes(filters.ticketId.toLowerCase())) match = false;
-        if (filters.customerName && !item.customer_name?.toLowerCase().includes(filters.customerName.toLowerCase())) match = false;
-        if (filters.productType && item.product_type_name !== filters.productType) match = false;
-        if (filters.status && item.receiving_status !== filters.status) match = false;
-
-        if (filters.startDate || filters.endDate) {
-            const itemDate = new Date(item.created_at);
-            if (filters.startDate && itemDate < startOfDay(new Date(filters.startDate))) match = false;
-            if (filters.endDate && itemDate > endOfDay(new Date(filters.endDate))) match = false;
-        }
-
-        return match;
-    });
+    const filteredItems = items;
 
     // Group items by ticket_number
     const groupedItems = filteredItems.reduce((acc, item) => {
@@ -270,6 +279,19 @@ export default function Receiving({ canManageCompletion }: { canManageCompletion
                             No items match the current filter.
                         </div>
                     </Card>
+                )}
+
+                {page * TICKET_PAGE_SIZE < totalTickets && (
+                    <div className="flex justify-center py-4">
+                        <Button
+                            variant="secondary"
+                            disabled={loadingMore}
+                            isLoading={loadingMore}
+                            onClick={() => loadItems({ reset: false })}
+                        >
+                            Load More
+                        </Button>
+                    </div>
                 )}
             </div>
         </div>
