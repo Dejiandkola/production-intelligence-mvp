@@ -40,8 +40,12 @@ export default function MonthlyBreakdownPage() {
     const [accessDenied, setAccessDenied] = useState(false);
     const [monthlyProductOutput, setMonthlyProductOutput] = useState({ months: [], rows: [] });
     const [monthlyTailorPay, setMonthlyTailorPay] = useState({ months: [], rows: [] });
+    const [monthlyCategoryBreakdown, setMonthlyCategoryBreakdown] = useState({ months: [], rows: [] });
+    const [monthlyProductTypePayout, setMonthlyProductTypePayout] = useState({ months: [], rows: [] });
     const [showAllProducts, setShowAllProducts] = useState(false);
     const [showAllTailors, setShowAllTailors] = useState(false);
+    const [showAllCategories, setShowAllCategories] = useState(false);
+    const [showAllProductTypes, setShowAllProductTypes] = useState(false);
 
     useEffect(() => {
         checkAccess();
@@ -72,9 +76,10 @@ export default function MonthlyBreakdownPage() {
     };
 
     const loadBreakdown = async () => {
-        const [allItems, monthlyPayroll] = await Promise.all([
+        const [allItems, monthlyPayroll, payrollEntries] = await Promise.all([
             db.getItems(),
             db.getMonthlyPayrollSummary(),
+            db.getPayrollEntries(),
         ]);
 
         const producedDates = allItems
@@ -151,8 +156,57 @@ export default function MonthlyBreakdownPage() {
         const tailorRows = Object.values(tailorMap)
             .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
 
+        const approvedTasks = payrollEntries.filter(entry => {
+            const payoutDate = new Date(entry.updated_at || entry.created_at);
+            return isWithinInterval(payoutDate, { start: startDate, end: endDate });
+        });
+
+        const categoryMap = {};
+        approvedTasks.forEach(task => {
+            const categoryName = task.category_name || 'Uncategorized';
+            const payoutDate = new Date(task.updated_at || task.created_at);
+            const monthKey = getMonthKey(payoutDate);
+            const amount = Number(task.pay_amount || 0);
+
+            if (!categoryMap[categoryName]) {
+                categoryMap[categoryName] = { name: categoryName, total: 0 };
+                monthKeys.forEach(key => {
+                    categoryMap[categoryName][key] = 0;
+                });
+            }
+
+            categoryMap[categoryName][monthKey] += amount;
+            categoryMap[categoryName].total += amount;
+        });
+
+        const categoryRows = Object.values(categoryMap)
+            .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+
+        const productTypePayoutMap = {};
+        approvedTasks.forEach(task => {
+            const productTypeName = task.product_type_name || 'Unknown Product';
+            const payoutDate = new Date(task.updated_at || task.created_at);
+            const monthKey = getMonthKey(payoutDate);
+            const amount = Number(task.pay_amount || 0);
+
+            if (!productTypePayoutMap[productTypeName]) {
+                productTypePayoutMap[productTypeName] = { name: productTypeName, total: 0 };
+                monthKeys.forEach(key => {
+                    productTypePayoutMap[productTypeName][key] = 0;
+                });
+            }
+
+            productTypePayoutMap[productTypeName][monthKey] += amount;
+            productTypePayoutMap[productTypeName].total += amount;
+        });
+
+        const productTypePayoutRows = Object.values(productTypePayoutMap)
+            .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+
         setMonthlyProductOutput({ months: monthKeys, rows: productRows });
         setMonthlyTailorPay({ months: monthKeys, rows: tailorRows });
+        setMonthlyCategoryBreakdown({ months: monthKeys, rows: categoryRows });
+        setMonthlyProductTypePayout({ months: monthKeys, rows: productTypePayoutRows });
     };
 
     if (accessDenied) {
@@ -171,6 +225,8 @@ export default function MonthlyBreakdownPage() {
 
     const visibleProductRows = showAllProducts ? monthlyProductOutput.rows : monthlyProductOutput.rows.slice(0, 5);
     const visibleTailorRows = showAllTailors ? monthlyTailorPay.rows : monthlyTailorPay.rows.slice(0, 5);
+    const visibleCategoryRows = showAllCategories ? monthlyCategoryBreakdown.rows : monthlyCategoryBreakdown.rows.slice(0, 5);
+    const visibleProductTypeRows = showAllProductTypes ? monthlyProductTypePayout.rows : monthlyProductTypePayout.rows.slice(0, 5);
 
     return (
         <div className="space-y-6">
@@ -287,6 +343,116 @@ export default function MonthlyBreakdownPage() {
                                 <tr>
                                     <td colSpan={monthlyTailorPay.months.length + 2} className="px-4 py-8 text-center text-gray-500">
                                         No monthly tailor payouts available for this payroll logic.
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </Card>
+
+            <Card>
+                <div className="mb-4 flex items-center justify-between">
+                    <h3 className="font-serif text-lg">Category Breakdown</h3>
+                    <div className="flex items-center gap-3">
+                        {monthlyCategoryBreakdown.rows.length > 5 && (
+                            <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => setShowAllCategories(prev => !prev)}
+                            >
+                                {showAllCategories ? 'Show Top 5' : 'View All'}
+                            </Button>
+                        )}
+                        <Badge variant="neutral">Monthly Payout by Category</Badge>
+                    </div>
+                </div>
+                <div className="overflow-x-auto">
+                    <table className="min-w-full whitespace-nowrap text-left text-sm">
+                        <thead className="border-b border-gray-100 bg-gray-50">
+                            <tr>
+                                <th className="px-4 py-3 font-medium text-gray-500">Category</th>
+                                {monthlyCategoryBreakdown.months.map((monthKey) => (
+                                    <th key={monthKey} className="px-4 py-3 text-right font-medium text-gray-500">
+                                        {getMonthLabel(monthKey)}
+                                    </th>
+                                ))}
+                                <th className="px-4 py-3 text-right font-medium text-gray-500">Total</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                            {visibleCategoryRows.map((row) => (
+                                <tr key={row.name} className="hover:bg-gray-50/50">
+                                    <td className="px-4 py-3 font-medium text-gray-900">{row.name}</td>
+                                    {monthlyCategoryBreakdown.months.map((monthKey) => (
+                                        <td key={`${row.name}-${monthKey}`} className="px-4 py-3 text-right text-gray-600">
+                                            NGN {Number(row[monthKey] || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </td>
+                                    ))}
+                                    <td className="px-4 py-3 text-right font-semibold text-maison-primary">
+                                        NGN {Number(row.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </td>
+                                </tr>
+                            ))}
+                            {monthlyCategoryBreakdown.rows.length === 0 && (
+                                <tr>
+                                    <td colSpan={monthlyCategoryBreakdown.months.length + 2} className="px-4 py-8 text-center text-gray-500">
+                                        No monthly category payout data available for this payroll logic.
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </Card>
+
+            <Card>
+                <div className="mb-4 flex items-center justify-between">
+                    <h3 className="font-serif text-lg">Product Type Payout</h3>
+                    <div className="flex items-center gap-3">
+                        {monthlyProductTypePayout.rows.length > 5 && (
+                            <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => setShowAllProductTypes(prev => !prev)}
+                            >
+                                {showAllProductTypes ? 'Show Top 5' : 'View All'}
+                            </Button>
+                        )}
+                        <Badge variant="neutral">Approved Payout by Product Type</Badge>
+                    </div>
+                </div>
+                <div className="overflow-x-auto">
+                    <table className="min-w-full whitespace-nowrap text-left text-sm">
+                        <thead className="border-b border-gray-100 bg-gray-50">
+                            <tr>
+                                <th className="px-4 py-3 font-medium text-gray-500">Product Type</th>
+                                {monthlyProductTypePayout.months.map((monthKey) => (
+                                    <th key={monthKey} className="px-4 py-3 text-right font-medium text-gray-500">
+                                        {getMonthLabel(monthKey)}
+                                    </th>
+                                ))}
+                                <th className="px-4 py-3 text-right font-medium text-gray-500">Total</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                            {visibleProductTypeRows.map((row) => (
+                                <tr key={row.name} className="hover:bg-gray-50/50">
+                                    <td className="px-4 py-3 font-medium text-gray-900">{row.name}</td>
+                                    {monthlyProductTypePayout.months.map((monthKey) => (
+                                        <td key={`${row.name}-${monthKey}`} className="px-4 py-3 text-right text-gray-600">
+                                            NGN {Number(row[monthKey] || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </td>
+                                    ))}
+                                    <td className="px-4 py-3 text-right font-semibold text-maison-primary">
+                                        NGN {Number(row.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </td>
+                                </tr>
+                            ))}
+                            {monthlyProductTypePayout.rows.length === 0 && (
+                                <tr>
+                                    <td colSpan={monthlyProductTypePayout.months.length + 2} className="px-4 py-8 text-center text-gray-500">
+                                        No monthly product type payouts available for this payroll logic.
                                     </td>
                                 </tr>
                             )}

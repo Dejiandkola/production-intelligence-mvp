@@ -1450,7 +1450,6 @@ async updateTicket(id, { customer_name }) {
 
     async getPayrollEntries(startDate, endDate) {
         const ctx = await getContext()
-
         const rangeStart = toDateBoundary(startDate, 'start')
         const rangeEnd = toDateBoundary(endDate, 'end')
 
@@ -1467,6 +1466,14 @@ async updateTicket(id, { customer_name }) {
                     created_at,
                     updated_at,
                     tailor_id,
+                    items (
+                        product_types (
+                            name
+                        )
+                    ),
+                    category_types (
+                        name
+                    ),
                     tailors (
                         id,
                         name,
@@ -1475,7 +1482,7 @@ async updateTicket(id, { customer_name }) {
                     )
                 `)
                 .eq('organization_id', ctx.organizationId)
-                .eq('status', 'QC_PASSED')
+                .in('status', ['QC_PASSED', 'PAID'])
 
             if (rangeStart) {
                 query = query.gte('updated_at', rangeStart)
@@ -1501,6 +1508,8 @@ async updateTicket(id, { customer_name }) {
 
         return allEntries.map(wa => ({
             ...wa,
+            category_name: wa.category_types?.name || null,
+            product_type_name: wa.items?.product_types?.name || null,
             tailor_name: wa.tailors?.name || 'Unknown',
             department: wa.tailors?.department || 'Production'
         }))

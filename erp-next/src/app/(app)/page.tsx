@@ -114,6 +114,8 @@ export default function Dashboard() {
             return isWithinInterval(date, { start: startDate, end: endDate });
         });
 
+        const verifiedTasks = tasks.filter(task => task.status === 'Approved' || task.status === 'PAID');
+
         const totalRevenue = payroll.reduce((sum, row) => sum + (Number(row.weekly_total_pay) || 0), 0);
         const previousTotalRevenue = previousPayroll.reduce((sum, row) => sum + (Number(row.weekly_total_pay) || 0), 0);
         const totalRevenueChange = previousTotalRevenue === 0 ? (totalRevenue > 0 ? null : 0) : totalRevenue - previousTotalRevenue;
@@ -171,21 +173,27 @@ export default function Dashboard() {
             .sort((a, b) => b.total - a.total || b.produced - a.produced || a.name.localeCompare(b.name));
 
         const preferredCategoryOrder = ['Amendment', 'Cutting', 'Sewing', 'Laundry', 'Embroidery'];
-        const categoryCounts = tasks.reduce((acc, task) => {
+        const categorySpend = verifiedTasks.reduce((acc, task) => {
             const categoryName = task.category_name;
             if (!categoryName) return acc;
-            acc[categoryName] = (acc[categoryName] || 0) + 1;
+
+            if (!acc[categoryName]) {
+                acc[categoryName] = { spend: 0, count: 0 };
+            }
+
+            acc[categoryName].spend += Number(task.pay_amount || 0);
+            acc[categoryName].count += 1;
             return acc;
         }, {});
 
         const orderedCategoryBreakdown = [
             ...preferredCategoryOrder
-                .filter(name => Object.prototype.hasOwnProperty.call(categoryCounts, name))
-                .map(name => ({ name, count: categoryCounts[name] })),
-            ...Object.entries(categoryCounts)
+                .filter(name => Object.prototype.hasOwnProperty.call(categorySpend, name))
+                .map(name => ({ name, ...categorySpend[name] })),
+            ...Object.entries(categorySpend)
                 .filter(([name]) => !preferredCategoryOrder.includes(name))
                 .sort((a, b) => a[0].localeCompare(b[0]))
-                .map(([name, count]) => ({ name, count })),
+                .map(([name, metrics]) => ({ name, ...metrics })),
         ];
 
         setStats({
@@ -435,17 +443,22 @@ export default function Dashboard() {
                 </Card>
 
                 <Card>
-                    <h3 className="mb-4 font-serif text-lg">Pipeline Status</h3>
+                    <h3 className="mb-4 font-serif text-lg">Category Breakdown</h3>
                     <div className="space-y-4">
                         {categoryBreakdown.map((category) => (
                             <div key={category.name} className="flex items-center justify-between rounded-lg bg-gray-50 p-3">
-                                <span className="text-sm text-gray-600">{category.name}</span>
-                                <span className="font-medium">{category.count}</span>
+                                <div>
+                                    <div className="text-sm text-gray-700">{category.name}</div>
+                                    <div className="text-xs text-gray-500">{category.count} approved tasks</div>
+                                </div>
+                                <span className="font-medium text-maison-primary">
+                                    NGN {Number(category.spend || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </span>
                             </div>
                         ))}
                         {categoryBreakdown.length === 0 && (
                             <div className="rounded-lg bg-gray-50 p-3 text-sm text-gray-500">
-                                No category activity in this date range.
+                                No approved pipeline spend in this date range.
                             </div>
                         )}
                     </div>
