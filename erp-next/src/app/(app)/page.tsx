@@ -97,10 +97,11 @@ export default function Dashboard() {
         const previousEndDate = new Date(startDate.getTime() - 1);
         const previousStartDate = new Date(previousEndDate.getTime() - periodLengthMs + 1);
 
-        const [allItems, allTasks, payroll] = await Promise.all([
+        const [allItems, allTasks, payroll, previousPayroll] = await Promise.all([
             db.getItems(),
             db.getTasks(),
             db.getWeeklyPayroll(dateRange.start, dateRange.end),
+            db.getWeeklyPayroll(toInputDate(previousStartDate), toInputDate(previousEndDate)),
         ]);
 
         const items = allItems.filter(item => {
@@ -113,15 +114,8 @@ export default function Dashboard() {
             return isWithinInterval(date, { start: startDate, end: endDate });
         });
 
-        const previousTasks = allTasks.filter(task => {
-            const date = new Date(task.updated_at || task.created_at);
-            return isWithinInterval(date, { start: previousStartDate, end: previousEndDate });
-        });
-
-        const verifiedTasks = tasks.filter(task => task.status === 'Approved' || task.status === 'PAID');
-        const totalRevenue = verifiedTasks.reduce((sum, task) => sum + (Number(task.pay_amount) || 0), 0);
-        const previousVerifiedTasks = previousTasks.filter(task => task.status === 'Approved' || task.status === 'PAID');
-        const previousTotalRevenue = previousVerifiedTasks.reduce((sum, task) => sum + (Number(task.pay_amount) || 0), 0);
+        const totalRevenue = payroll.reduce((sum, row) => sum + (Number(row.weekly_total_pay) || 0), 0);
+        const previousTotalRevenue = previousPayroll.reduce((sum, row) => sum + (Number(row.weekly_total_pay) || 0), 0);
         const totalRevenueChange = previousTotalRevenue === 0 ? (totalRevenue > 0 ? null : 0) : totalRevenue - previousTotalRevenue;
 
         const previousItems = allItems.filter(item => {

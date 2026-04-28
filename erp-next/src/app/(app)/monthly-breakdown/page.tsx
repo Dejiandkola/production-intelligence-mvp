@@ -72,9 +72,9 @@ export default function MonthlyBreakdownPage() {
     };
 
     const loadBreakdown = async () => {
-        const [allItems, payrollEntries] = await Promise.all([
+        const [allItems, monthlyPayroll] = await Promise.all([
             db.getItems(),
-            db.getPayrollEntries(),
+            db.getMonthlyPayrollSummary(),
         ]);
 
         const producedDates = allItems
@@ -82,8 +82,12 @@ export default function MonthlyBreakdownPage() {
             .map(item => new Date(item.updated_at || item.created_at))
             .filter(date => !Number.isNaN(date.getTime()));
 
-        const payoutDates = payrollEntries
-            .map(entry => new Date(entry.updated_at || entry.created_at))
+        const payoutDates = monthlyPayroll
+            .map(entry => {
+                const [year, month] = String(entry.month_key || '').split('-').map(Number);
+                return year && month ? new Date(year, month - 1, 1) : null;
+            })
+            .filter(Boolean)
             .filter(date => !Number.isNaN(date.getTime()));
 
         const allRelevantDates = [...producedDates, ...payoutDates];
@@ -124,27 +128,24 @@ export default function MonthlyBreakdownPage() {
         const productRows = Object.values(productMap)
             .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
 
-        const approvedTasks = payrollEntries.filter(entry => {
-            const payoutDate = new Date(entry.updated_at || entry.created_at);
-            return isWithinInterval(payoutDate, { start: startDate, end: endDate });
-        });
-
         const tailorMap = {};
-        approvedTasks.forEach(task => {
-            const tailorName = task.tailor_name || 'Unassigned Tailor';
-            const payoutDate = new Date(task.updated_at || task.created_at);
-            const monthKey = getMonthKey(payoutDate);
-            const amount = Number(task.pay_amount || 0);
+        monthlyPayroll.forEach(entry => {
+            const tailorId = entry.tailor_id || entry.tailor_name || 'unassigned';
+            const tailorName = entry.tailor_name || 'Unassigned Tailor';
+            const monthKey = entry.month_key;
+            const amount = Number(entry.monthly_total_pay || 0);
 
-            if (!tailorMap[tailorName]) {
-                tailorMap[tailorName] = { name: tailorName, total: 0 };
+            if (!monthKeys.includes(monthKey)) return;
+
+            if (!tailorMap[tailorId]) {
+                tailorMap[tailorId] = { id: tailorId, name: tailorName, total: 0 };
                 monthKeys.forEach(key => {
-                    tailorMap[tailorName][key] = 0;
+                    tailorMap[tailorId][key] = 0;
                 });
             }
 
-            tailorMap[tailorName][monthKey] += amount;
-            tailorMap[tailorName].total += amount;
+            tailorMap[tailorId][monthKey] += amount;
+            tailorMap[tailorId].total += amount;
         });
 
         const tailorRows = Object.values(tailorMap)
@@ -270,7 +271,7 @@ export default function MonthlyBreakdownPage() {
                         </thead>
                         <tbody className="divide-y divide-gray-100">
                             {visibleTailorRows.map((row) => (
-                                <tr key={row.name} className="hover:bg-gray-50/50">
+                                <tr key={row.id || row.name} className="hover:bg-gray-50/50">
                                     <td className="px-4 py-3 font-medium text-gray-900">{row.name}</td>
                                     {monthlyTailorPay.months.map((monthKey) => (
                                         <td key={`${row.name}-${monthKey}`} className="px-4 py-3 text-right text-gray-600">

@@ -1,7 +1,7 @@
 // @ts-nocheck
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { db } from '@/services/db';
 import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
@@ -10,10 +10,12 @@ import { Modal } from '@/components/UI/Modal';
 import { CSVImporter } from '@/components/Shared/CSVImporter';
 import { Plus, Trash2, Edit2, Search, FilterX, Clock, CheckCircle2, ChevronDown, ChevronRight } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { format, startOfDay, endOfDay } from 'date-fns';
+import { format } from 'date-fns';
 import { CreateItemModal } from '@/components/Production/CreateItemModal';
 
 const PRODUCTION_ASSIGNMENT_CATEGORIES = ['Cutting', 'Airstay Cutting', 'Embroidery'];
+const TICKET_PAGE_SIZE = 50;
+const ITEM_STATUS_OPTIONS = ['IN_PRODUCTION', 'OUT_OF_PRODUCTION', 'ARCHIVED', 'CANCELLED'];
 
 export default function ItemList({ canManageProduction, permissions = [] }: { canManageProduction: boolean, permissions?: string[] }) {
     const router = useRouter();
@@ -21,7 +23,13 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
     const [items, setItems] = useState([]);
     const [rateCards, setRateCards] = useState([]);
     const [tailors, setTailors] = useState([]);
+    const [productTypes, setProductTypes] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const [page, setPage] = useState(1);
+    const [totalTickets, setTotalTickets] = useState(0);
+    const [summary, setSummary] = useState({ totalBacklog: 0, totalCompleted: 0 });
+    const loadMoreRef = useRef(null);
     const [filters, setFilters] = useState({
         ticketId: '',
         customerName: '',
@@ -46,24 +54,61 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
         loadPageData();
     }, []);
 
+    useEffect(() => {
+        loadItems({ reset: true });
+    }, [filters]);
+
+    useEffect(() => {
+        const marker = loadMoreRef.current;
+        if (!marker) return;
+
+        const observer = new IntersectionObserver((entries) => {
+            if (entries[0]?.isIntersecting && !loading && !loadingMore && items.length > 0 && page * TICKET_PAGE_SIZE < totalTickets) {
+                loadItems({ reset: false });
+            }
+        }, { rootMargin: '300px' });
+
+        observer.observe(marker);
+        return () => observer.disconnect();
+    }, [loading, loadingMore, items.length, page, totalTickets, filters]);
+
     const loadPageData = async () => {
         setLoading(true);
-        const [data, ratesData, tailorsData] = await Promise.all([
-            db.getItems(),
+        const [result, summaryData, ratesData, tailorsData, productTypesData] = await Promise.all([
+            db.getTicketPaginatedItems(filters, 1, TICKET_PAGE_SIZE, { excludeCancelled: false, excludeArchived: false }),
+            db.getProductionItemSummary(),
             db.getRates(),
-            db.getTailors()
+            db.getTailors(),
+            db.getProductTypes()
         ]);
-        setItems(data);
+        setItems(result.items);
+        setTotalTickets(result.totalTickets);
+        setSummary(summaryData);
+        setPage(1);
         setRateCards(ratesData);
         setTailors(tailorsData);
+        setProductTypes(productTypesData);
         setLoading(false);
     };
 
-    const loadItems = async () => {
-        setLoading(true);
-        const data = await db.getItems();
-        setItems(data);
-        setLoading(false);
+    const loadItems = async ({ reset = true } = {}) => {
+        const nextPage = reset ? 1 : page + 1;
+        if (reset) setLoading(true);
+        else setLoadingMore(true);
+
+        try {
+            const [result, summaryData] = await Promise.all([
+                db.getTicketPaginatedItems(filters, nextPage, TICKET_PAGE_SIZE, { excludeCancelled: false, excludeArchived: false }),
+                reset ? db.getProductionItemSummary() : Promise.resolve(summary)
+            ]);
+            setItems(prev => reset ? result.items : [...prev, ...result.items]);
+            setTotalTickets(result.totalTickets);
+            if (reset) setSummary(summaryData);
+            setPage(nextPage);
+        } finally {
+            setLoading(false);
+            setLoadingMore(false);
+        }
     };
 
     const getStatusVariant = (status) => {
@@ -351,28 +396,13 @@ const handleDeleteItem = async (id) => {
         await loadItems();
     };
 
-    const totalBacklog = items.filter(i => i.status !== 'OUT_OF_PRODUCTION' && i.status !== 'ARCHIVED' && i.status !== 'CANCELLED').length;
-    const totalCompleted = items.filter(i => i.status === 'OUT_OF_PRODUCTION').length;
+    const totalBacklog = summary.totalBacklog;
+    const totalCompleted = summary.totalCompleted;
 
-    const uniqueProductTypes = [...new Set(items.map(i => i.product_type_name))].filter(Boolean);
-    const uniqueStatuses = [...new Set(items.map(i => i.status))].filter(Boolean);
+    const uniqueProductTypes = productTypes.map(productType => productType.name).filter(Boolean);
+    const uniqueStatuses = ITEM_STATUS_OPTIONS;
 
-    const filteredItems = items.filter(item => {
-        let match = true;
-
-        if (filters.ticketId && !item.ticket_number?.toLowerCase().includes(filters.ticketId.toLowerCase())) match = false;
-        if (filters.customerName && !item.customer_name?.toLowerCase().includes(filters.customerName.toLowerCase())) match = false;
-        if (filters.productType && item.product_type_name !== filters.productType) match = false;
-        if (filters.status && item.status !== filters.status) match = false;
-
-        if (filters.startDate || filters.endDate) {
-            const itemDate = new Date(item.created_at);
-            if (filters.startDate && itemDate < startOfDay(new Date(filters.startDate))) match = false;
-            if (filters.endDate && itemDate > endOfDay(new Date(filters.endDate))) match = false;
-        }
-
-        return match;
-    });
+    const filteredItems = items;
 
     const groupedItems = filteredItems.reduce((acc, item) => {
         const tId = item.ticket_number || 'Unassigned';
@@ -799,6 +829,16 @@ const handleDeleteItem = async (id) => {
                         </div>
                     </Card>
                 )}
+
+                <div ref={loadMoreRef} className="py-4 text-center text-sm text-gray-500">
+                    {loadingMore
+                        ? 'Loading more tickets...'
+                        : page * TICKET_PAGE_SIZE < totalTickets
+                            ? 'Scroll to load more tickets'
+                            : filteredItems.length > 0
+                                ? 'All matching tickets loaded'
+                                : ''}
+                </div>
             </div>
             {isCreateModalOpen && (
                 <CreateItemModal

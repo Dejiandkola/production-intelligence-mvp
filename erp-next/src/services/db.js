@@ -5,6 +5,7 @@ const supabase = createClient()
 let contextCache = null
 let contextCacheTime = 0
 const CONTEXT_TTL_MS = 60 * 1000
+const QUERY_PAGE_SIZE = 1000
 
 export class NotAuthenticatedError extends Error {
     constructor(message = "User not authenticated") {
@@ -171,6 +172,19 @@ function toDateBoundary(value, boundary) {
     const day = raw.includes('T') ? raw.split('T')[0] : raw
 
     return boundary === 'start' ? `${day}T00:00:00.000` : `${day}T23:59:59.999`
+}
+
+function mapItemRow(item) {
+    return {
+        ...item,
+        raw_status: item.raw_status || item.status,
+        status: normalizeItemStatus(item.status),
+        receiving_status: item.receiving_status || getReceivingStatus(item),
+        ticket_number: item.ticket_number || item.tickets?.ticket_number,
+        customer_name: item.customer_name || item.tickets?.customer_name,
+        product_type_name: item.product_type_name || item.product_types?.name,
+        work_assignments: item.work_assignments || []
+    }
 }
 
 export const db = {
@@ -1158,40 +1172,93 @@ export const db = {
     async getItems() {
         const ctx = await getContext()
 
-        const { data, error } = await supabase
-            .from('items')
-            .select(`
-                *,
-                tickets(ticket_number, customer_name),
-                product_types(name),
-                work_assignments(
-                    id,
-                    category_type_id,
-                    task_type_id,
-                    tailor_id,
-                    category_types(name),
-                    task_types(name),
-                    tailors(name, active, band)
-                )
-            `)
-            .eq('organization_id', ctx.organizationId)
-            .order('created_at', { ascending: false })
+        const allItems = []
+        let from = 0
+
+        while (true) {
+            const { data, error } = await supabase
+                .from('items')
+                .select(`
+                    *,
+                    tickets(ticket_number, customer_name),
+                    product_types(name),
+                    work_assignments(
+                        id,
+                        category_type_id,
+                        task_type_id,
+                        tailor_id,
+                        category_types(name),
+                        task_types(name),
+                        tailors(name, active, band)
+                    )
+                `)
+                .eq('organization_id', ctx.organizationId)
+                .order('created_at', { ascending: false })
+                .range(from, from + QUERY_PAGE_SIZE - 1)
+
+            if (error) {
+                console.error(error)
+                throw new Error(error.message)
+            }
+
+            allItems.push(...(data || []))
+
+            if (!data || data.length < QUERY_PAGE_SIZE) break
+            from += QUERY_PAGE_SIZE
+        }
+
+        // Map foreign relations to expected UI names
+        return allItems.map(mapItemRow)
+    },
+
+    async getTicketPaginatedItems(filters = {}, page = 1, pageSize = 50, options = {}) {
+        const { data, error } = await supabase.rpc('get_ticket_paginated_items', {
+            p_ticket_search: filters.ticketId || null,
+            p_customer_search: filters.customerName || null,
+            p_product_type: filters.productType || null,
+            p_category: filters.category || null,
+            p_status: filters.status || null,
+            p_start_date: toDateBoundary(filters.startDate, 'start'),
+            p_end_date: toDateBoundary(filters.endDate, 'end'),
+            p_receiving_status: filters.receivingStatus || null,
+            p_exclude_cancelled: Boolean(options.excludeCancelled),
+            p_exclude_archived: Boolean(options.excludeArchived),
+            p_page: page,
+            p_page_size: pageSize
+        })
 
         if (error) {
             console.error(error)
             throw new Error(error.message)
         }
 
-        // Map foreign relations to expected UI names
-        return data.map(item => ({
-            ...item,
-            raw_status: item.status,
-            status: normalizeItemStatus(item.status),
-            receiving_status: getReceivingStatus(item),
-            ticket_number: item.tickets?.ticket_number,
-            customer_name: item.tickets?.customer_name,
-            product_type_name: item.product_types?.name
-        }))
+        const rows = data || []
+        return {
+            items: rows.map(row => mapItemRow(row.item || {})),
+            totalTickets: Number(rows[0]?.total_tickets || 0)
+        }
+    },
+
+    async getProductionItemSummary(filters = {}) {
+        const { data, error } = await supabase.rpc('get_production_item_summary', {
+            p_ticket_search: filters.ticketId || null,
+            p_customer_search: filters.customerName || null,
+            p_product_type: filters.productType || null,
+            p_status: filters.status || null,
+            p_start_date: toDateBoundary(filters.startDate, 'start'),
+            p_end_date: toDateBoundary(filters.endDate, 'end')
+        })
+
+        if (error) {
+            console.error(error)
+            throw new Error(error.message)
+        }
+
+        const summary = data?.[0] || {}
+        return {
+            totalBacklog: Number(summary.total_backlog || 0),
+            totalCompleted: Number(summary.total_completed || 0)
+        }
     },
 
     async getItemById(itemId) {
@@ -1384,43 +1451,55 @@ async updateTicket(id, { customer_name }) {
     async getPayrollEntries(startDate, endDate) {
         const ctx = await getContext()
 
-        let query = supabase
-            .from('work_assignments')
-            .select(`
-            id,
-            pay_amount,
-            status,
-            created_at,
-            updated_at,
-            tailor_id,
-            tailors (
-                id,
-                name,
-                band,
-                department
-            )
-        `)
-            .eq('organization_id', ctx.organizationId)
-            .eq('status', 'QC_PASSED')
-
         const rangeStart = toDateBoundary(startDate, 'start')
         const rangeEnd = toDateBoundary(endDate, 'end')
 
-        if (rangeStart) {
-            query = query.gte('updated_at', rangeStart)
-        }
-        if (rangeEnd) {
-            query = query.lte('updated_at', rangeEnd)
+        const allEntries = []
+        let from = 0
+
+        while (true) {
+            let query = supabase
+                .from('work_assignments')
+                .select(`
+                    id,
+                    pay_amount,
+                    status,
+                    created_at,
+                    updated_at,
+                    tailor_id,
+                    tailors (
+                        id,
+                        name,
+                        band,
+                        department
+                    )
+                `)
+                .eq('organization_id', ctx.organizationId)
+                .eq('status', 'QC_PASSED')
+
+            if (rangeStart) {
+                query = query.gte('updated_at', rangeStart)
+            }
+            if (rangeEnd) {
+                query = query.lte('updated_at', rangeEnd)
+            }
+
+            const { data, error } = await query
+                .order('updated_at', { ascending: false })
+                .range(from, from + QUERY_PAGE_SIZE - 1)
+
+            if (error) {
+                console.error(error)
+                throw new Error(error.message)
+            }
+
+            allEntries.push(...(data || []))
+
+            if (!data || data.length < QUERY_PAGE_SIZE) break
+            from += QUERY_PAGE_SIZE
         }
 
-        const { data, error } = await query
-
-        if (error) {
-            console.error(error)
-            throw new Error(error.message)
-        }
-
-        return (data || []).map(wa => ({
+        return allEntries.map(wa => ({
             ...wa,
             tailor_name: wa.tailors?.name || 'Unknown',
             department: wa.tailors?.department || 'Production'
@@ -1428,33 +1507,31 @@ async updateTicket(id, { customer_name }) {
     },
 
     async getWeeklyPayroll(startDate, endDate) {
-        const data = await this.getPayrollEntries(startDate, endDate)
+        const rangeStart = toDateBoundary(startDate, 'start')
+        const rangeEnd = toDateBoundary(endDate, 'end')
 
-        const payrollMap = {}
+        const { data, error } = await supabase.rpc('get_dashboard_payroll_summary', {
+            p_start_date: rangeStart,
+            p_end_date: rangeEnd
+        })
 
-        for (const wa of data) {
-            const tailorId = wa.tailor_id
-
-            if (!payrollMap[tailorId]) {
-                payrollMap[tailorId] = {
-                    tailor_id: tailorId,
-                    tailor_name: wa.tailor_name,
-                    department: wa.department,
-                    weekly_verified_total: 0,
-                    weekly_total_pay: 0,
-                    task_count: 0
-                }
-            }
-
-            const pay = Number(wa.pay_amount || 0)
-
-            payrollMap[tailorId].weekly_verified_total += pay
-            payrollMap[tailorId].weekly_total_pay += pay
-            payrollMap[tailorId].task_count += 1
+        if (error) {
+            console.error(error)
+            throw new Error(error.message)
         }
 
-        const finalPayroll = Object.values(payrollMap)
-        return finalPayroll
+        return data || []
+    },
+
+    async getMonthlyPayrollSummary() {
+        const { data, error } = await supabase.rpc('get_monthly_payroll_summary')
+
+        if (error) {
+            console.error(error)
+            throw new Error(error.message)
+        }
+
+        return data || []
     },
 
     async createWorkAssignment(payload) {
@@ -1608,24 +1685,35 @@ async updateTicket(id, { customer_name }) {
     async getTasks() {
         const ctx = await getContext()
 
-        const { data, error } = await supabase
-            .from('work_assignments')
-            .select(`
-                *,
-                task_types(name),
-                tailors(name),
-                category_types(name),
-                items(item_key, tickets(customer_name, ticket_number))
-            `)
-            .eq('organization_id', ctx.organizationId)
-            .order('created_at', { ascending: false })
+        const allTasks = []
+        let from = 0
 
-        if (error) {
-            console.error(error)
-            throw new Error(error.message)
+        while (true) {
+            const { data, error } = await supabase
+                .from('work_assignments')
+                .select(`
+                    *,
+                    task_types(name),
+                    tailors(name),
+                    category_types(name),
+                    items(item_key, tickets(customer_name, ticket_number))
+                `)
+                .eq('organization_id', ctx.organizationId)
+                .order('created_at', { ascending: false })
+                .range(from, from + QUERY_PAGE_SIZE - 1)
+
+            if (error) {
+                console.error(error)
+                throw new Error(error.message)
+            }
+
+            allTasks.push(...(data || []))
+
+            if (!data || data.length < QUERY_PAGE_SIZE) break
+            from += QUERY_PAGE_SIZE
         }
 
-        return data.map(task => ({
+        return allTasks.map(task => ({
             ...task,
             raw_status: task.status,
             status: normalizeAssignmentStatus(task.status),
@@ -1638,6 +1726,42 @@ async updateTicket(id, { customer_name }) {
             ticket_number: task.items?.tickets?.ticket_number,
             ticket_id: task.items?.tickets?.ticket_number || 'Unknown'
         }))
+    },
+
+    async getAccountTasks(filters = {}, page = 1, pageSize = 100) {
+        const { data, error } = await supabase.rpc('get_account_tailor_paginated_tasks', {
+            p_filter: filters.filter || 'pending',
+            p_customer_search: filters.searchCustomer || null,
+            p_ticket_search: filters.searchTicket || null,
+            p_tailor_search: filters.searchTailor || null,
+            p_task_name: filters.searchTask || null,
+            p_category_name: filters.searchCategory || null,
+            p_min_amount: filters.minAmount !== '' ? Number(filters.minAmount) || 0 : null,
+            p_max_amount: filters.maxAmount !== '' ? Number(filters.maxAmount) || 0 : null,
+            p_start_date: toDateBoundary(filters.dateFrom, 'start'),
+            p_end_date: toDateBoundary(filters.dateTo, 'end'),
+            p_page: page,
+            p_page_size: pageSize
+        })
+
+        if (error) {
+            console.error(error)
+            throw new Error(error.message)
+        }
+
+        const rows = data || []
+
+        return {
+            data: rows.map(row => row.task || {}).map(task => ({
+                ...task,
+                raw_status: task.status,
+                status: normalizeAssignmentStatus(task.status),
+                task_name: task.task_type_name,
+                tailor_name: task.tailor_name,
+                ticket_id: task.ticket_number || 'Unknown'
+            })),
+            count: Number(rows[0]?.total_tailors || 0)
+        }
     },
 
     async verifyTask(taskId, status, reason = null) {
