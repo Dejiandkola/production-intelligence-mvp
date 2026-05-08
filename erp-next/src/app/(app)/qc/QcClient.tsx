@@ -1,7 +1,7 @@
 // @ts-nocheck
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { db } from '@/services/db';
 import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
@@ -14,6 +14,7 @@ import { hasPerm } from '@/lib/permissions';
 
 const QC_PAGE_SIZE = 50;
 const ITEM_STATUS_OPTIONS = ['IN_PRODUCTION', 'OUT_OF_PRODUCTION', 'ARCHIVED'];
+const SEARCH_DEBOUNCE_MS = 350;
 
 export default function QCQueue({ permissions = [] }: { permissions?: string[] }) {
     const [items, setItems] = useState([]);
@@ -32,6 +33,7 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
         startDate: '',
         endDate: ''
     });
+    const [debouncedFilters, setDebouncedFilters] = useState(filters);
 
     const [rateCard, setRateCard] = useState([]);
     const [tailors, setTailors] = useState([]);
@@ -40,25 +42,48 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
 
     const [selectedItemId, setSelectedItemId] = useState(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const activeRequestIdRef = useRef(0);
+
+    useEffect(() => {
+        const debounceTimer = setTimeout(() => {
+            setDebouncedFilters(filters);
+        }, SEARCH_DEBOUNCE_MS);
+
+        return () => clearTimeout(debounceTimer);
+    }, [filters]);
 
     useEffect(() => {
         loadItems({ reset: true });
-    }, [filter, filters]);
+    }, [filter, debouncedFilters]);
 
     const loadItems = async ({ reset = true } = {}) => {
+        if (!reset && (loading || loadingMore)) return;
+
+        const requestId = activeRequestIdRef.current + 1;
+        activeRequestIdRef.current = requestId;
         const nextPage = reset ? 1 : page + 1;
-        if (reset) setLoading(true);
-        else setLoadingMore(true);
+        if (reset) {
+            setLoading(true);
+            setLoadingMore(false);
+            setPage(1);
+            setTotalTickets(0);
+        } else {
+            setLoadingMore(true);
+        }
 
         try {
             const assignmentFilter = filter === 'all' ? '' : filter;
             const [result, rc, t, productTypesData, categoriesData] = await Promise.all([
-                db.getTicketPaginatedItems(filters, nextPage, QC_PAGE_SIZE, { excludeCancelled: true }),
+                db.getTicketPaginatedItems(debouncedFilters, nextPage, QC_PAGE_SIZE, { excludeCancelled: true }),
                 reset ? db.getRates() : Promise.resolve(rateCard),
                 reset ? db.getTailors() : Promise.resolve(tailors),
                 reset ? db.getProductTypes() : Promise.resolve(productTypes),
                 reset ? db.getCategories() : Promise.resolve(categoryOptions.map(name => ({ name })))
             ]);
+
+            if (requestId !== activeRequestIdRef.current) {
+                return;
+            }
 
             const filteredByAssignment = result.items.filter(item => {
                 const assignmentCount = item.work_assignments?.length || 0;
@@ -77,8 +102,10 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
                 setCategoryOptions(categoriesData.map(category => category.name).filter(Boolean).sort());
             }
         } finally {
-            setLoading(false);
-            setLoadingMore(false);
+            if (requestId === activeRequestIdRef.current) {
+                setLoading(false);
+                setLoadingMore(false);
+            }
         }
     };
 
