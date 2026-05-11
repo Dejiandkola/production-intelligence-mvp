@@ -1,7 +1,7 @@
 // @ts-nocheck
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { db } from '@/services/db';
 import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
@@ -11,6 +11,7 @@ import { format } from 'date-fns';
 
 const TICKET_PAGE_SIZE = 50;
 const RECEIVING_STATUS_OPTIONS = ['Received', 'Not Received'];
+const SEARCH_DEBOUNCE_MS = 350;
 
 export default function Receiving({ canManageCompletion }: { canManageCompletion: boolean }) {
     const [items, setItems] = useState([]);
@@ -19,6 +20,7 @@ export default function Receiving({ canManageCompletion }: { canManageCompletion
     const [page, setPage] = useState(1);
     const [totalTickets, setTotalTickets] = useState(0);
     const [productTypes, setProductTypes] = useState([]);
+    const activeRequestIdRef = useRef(0);
     // Maintain the default 'Available' filter state by pre-setting status to 'Assigned by QC'
     const [filters, setFilters] = useState({
         ticketId: '',
@@ -28,33 +30,76 @@ export default function Receiving({ canManageCompletion }: { canManageCompletion
         startDate: '',
         endDate: ''
     });
+    const [debouncedSearch, setDebouncedSearch] = useState({
+        ticketId: '',
+        customerName: ''
+    });
+    const isSearchDebouncing =
+        filters.ticketId !== debouncedSearch.ticketId ||
+        filters.customerName !== debouncedSearch.customerName;
     const [expandedGroups, setExpandedGroups] = useState({});
 
     useEffect(() => {
+        const debounceTimer = setTimeout(() => {
+            setDebouncedSearch(prev => {
+                const nextSearch = {
+                    ticketId: filters.ticketId,
+                    customerName: filters.customerName
+                };
+                return prev.ticketId === nextSearch.ticketId && prev.customerName === nextSearch.customerName
+                    ? prev
+                    : nextSearch;
+            });
+        }, SEARCH_DEBOUNCE_MS);
+
+        return () => clearTimeout(debounceTimer);
+    }, [filters.ticketId, filters.customerName]);
+
+    useEffect(() => {
         loadItems({ reset: true });
-    }, [filters]);
+    }, [filters.productType, filters.status, filters.startDate, filters.endDate, debouncedSearch]);
 
     const loadItems = async ({ reset = true } = {}) => {
+        if (!reset && (loading || loadingMore || isSearchDebouncing || page * TICKET_PAGE_SIZE >= totalTickets)) return;
+
+        const requestId = activeRequestIdRef.current + 1;
+        activeRequestIdRef.current = requestId;
         const nextPage = reset ? 1 : page + 1;
-        if (reset) setLoading(true);
-        else setLoadingMore(true);
+        if (reset) {
+            setLoading(true);
+            setLoadingMore(false);
+            setItems([]);
+            setTotalTickets(0);
+            setPage(1);
+        } else {
+            setLoadingMore(true);
+        }
 
         try {
+            const currentFilters = {
+                ...filters,
+                ticketId: debouncedSearch.ticketId,
+                customerName: debouncedSearch.customerName
+            };
             const [result, productTypesData] = await Promise.all([
                 db.getTicketPaginatedItems({
-                    ...filters,
-                    receivingStatus: filters.status,
+                    ...currentFilters,
+                    receivingStatus: currentFilters.status,
                     status: ''
                 }, nextPage, TICKET_PAGE_SIZE, { excludeCancelled: true, excludeArchived: true }),
                 reset ? db.getProductTypes() : Promise.resolve(productTypes)
             ]);
+            if (requestId !== activeRequestIdRef.current) return;
+
             setItems(prev => reset ? result.items : [...prev, ...result.items]);
             setTotalTickets(result.totalTickets);
             setPage(nextPage);
             if (reset) setProductTypes(productTypesData);
         } finally {
-            setLoading(false);
-            setLoadingMore(false);
+            if (requestId === activeRequestIdRef.current) {
+                setLoading(false);
+                setLoadingMore(false);
+            }
         }
     };
 
@@ -179,7 +224,10 @@ export default function Receiving({ canManageCompletion }: { canManageCompletion
                     </div>
                     <Button
                         variant="ghost"
-                        onClick={() => setFilters({ ticketId: '', customerName: '', productType: '', status: '', startDate: '', endDate: '' })}
+                        onClick={() => {
+                            setFilters({ ticketId: '', customerName: '', productType: '', status: '', startDate: '', endDate: '' });
+                            setDebouncedSearch({ ticketId: '', customerName: '' });
+                        }}
                         className="text-gray-500 hover:text-gray-700 bg-gray-50 px-3"
                         title="Clear Filters"
                     >
@@ -285,7 +333,7 @@ export default function Receiving({ canManageCompletion }: { canManageCompletion
                     <div className="flex justify-center py-4">
                         <Button
                             variant="secondary"
-                            disabled={loadingMore}
+                            disabled={loadingMore || loading || isSearchDebouncing}
                             isLoading={loadingMore}
                             onClick={() => loadItems({ reset: false })}
                         >

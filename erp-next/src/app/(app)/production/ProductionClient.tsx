@@ -16,6 +16,7 @@ import { CreateItemModal } from '@/components/Production/CreateItemModal';
 const PRODUCTION_ASSIGNMENT_CATEGORIES = ['Cutting', 'Airstay Cutting', 'Embroidery'];
 const TICKET_PAGE_SIZE = 50;
 const ITEM_STATUS_OPTIONS = ['IN_PRODUCTION', 'OUT_OF_PRODUCTION', 'ARCHIVED', 'CANCELLED'];
+const SEARCH_DEBOUNCE_MS = 350;
 
 export default function ItemList({ canManageProduction, permissions = [] }: { canManageProduction: boolean, permissions?: string[] }) {
     const router = useRouter();
@@ -30,6 +31,8 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
     const [totalTickets, setTotalTickets] = useState(0);
     const [summary, setSummary] = useState({ totalBacklog: 0, totalCompleted: 0 });
     const loadMoreRef = useRef(null);
+    const activeRequestIdRef = useRef(0);
+    const isResettingRef = useRef(false);
     const [filters, setFilters] = useState({
         ticketId: '',
         customerName: '',
@@ -38,6 +41,13 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
         startDate: '',
         endDate: ''
     });
+    const [debouncedSearch, setDebouncedSearch] = useState({
+        ticketId: '',
+        customerName: ''
+    });
+    const isSearchDebouncing =
+        filters.ticketId !== debouncedSearch.ticketId ||
+        filters.customerName !== debouncedSearch.customerName;
     const [expandedGroups, setExpandedGroups] = useState({});
     const [activeAssignmentDialog, setActiveAssignmentDialog] = useState({ itemId: '', mode: '', categoryName: '' });
     const [assignmentForm, setAssignmentForm] = useState({
@@ -55,59 +65,100 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
     }, []);
 
     useEffect(() => {
+        const debounceTimer = setTimeout(() => {
+            const nextSearch = {
+                ticketId: filters.ticketId,
+                customerName: filters.customerName
+            };
+
+            setDebouncedSearch(prev => {
+                return prev.ticketId === nextSearch.ticketId && prev.customerName === nextSearch.customerName
+                    ? prev
+                    : nextSearch;
+            });
+        }, SEARCH_DEBOUNCE_MS);
+
+        return () => clearTimeout(debounceTimer);
+    }, [filters.ticketId, filters.customerName]);
+
+    useEffect(() => {
         loadItems({ reset: true });
-    }, [filters]);
+    }, [filters.productType, filters.status, filters.startDate, filters.endDate, debouncedSearch]);
 
     useEffect(() => {
         const marker = loadMoreRef.current;
         if (!marker) return;
 
         const observer = new IntersectionObserver((entries) => {
-            if (entries[0]?.isIntersecting && !loading && !loadingMore && items.length > 0 && page * TICKET_PAGE_SIZE < totalTickets) {
+            if (
+                entries[0]?.isIntersecting &&
+                !loading &&
+                !loadingMore &&
+                !isResettingRef.current &&
+                !isSearchDebouncing &&
+                items.length > 0 &&
+                page * TICKET_PAGE_SIZE < totalTickets
+            ) {
                 loadItems({ reset: false });
             }
         }, { rootMargin: '300px' });
 
         observer.observe(marker);
         return () => observer.disconnect();
-    }, [loading, loadingMore, items.length, page, totalTickets, filters]);
+    }, [loading, loadingMore, isSearchDebouncing, items.length, page, totalTickets, filters.productType, filters.status, filters.startDate, filters.endDate, debouncedSearch]);
 
     const loadPageData = async () => {
-        setLoading(true);
-        const [result, summaryData, ratesData, tailorsData, productTypesData] = await Promise.all([
-            db.getTicketPaginatedItems(filters, 1, TICKET_PAGE_SIZE, { excludeCancelled: false, excludeArchived: false }),
+        const [summaryData, ratesData, tailorsData, productTypesData] = await Promise.all([
             db.getProductionItemSummary(),
             db.getRates(),
             db.getTailors(),
             db.getProductTypes()
         ]);
-        setItems(result.items);
-        setTotalTickets(result.totalTickets);
         setSummary(summaryData);
-        setPage(1);
         setRateCards(ratesData);
         setTailors(tailorsData);
         setProductTypes(productTypesData);
-        setLoading(false);
     };
 
     const loadItems = async ({ reset = true } = {}) => {
+        if (!reset && (loading || loadingMore || isResettingRef.current || isSearchDebouncing || items.length === 0 || page * TICKET_PAGE_SIZE >= totalTickets)) return;
+
+        const requestId = activeRequestIdRef.current + 1;
+        activeRequestIdRef.current = requestId;
         const nextPage = reset ? 1 : page + 1;
-        if (reset) setLoading(true);
-        else setLoadingMore(true);
+        if (reset) {
+            isResettingRef.current = true;
+            setLoading(true);
+            setLoadingMore(false);
+            setItems([]);
+            setTotalTickets(0);
+            setPage(1);
+        } else {
+            setLoadingMore(true);
+        }
 
         try {
+            const currentFilters = {
+                ...filters,
+                ticketId: debouncedSearch.ticketId,
+                customerName: debouncedSearch.customerName
+            };
             const [result, summaryData] = await Promise.all([
-                db.getTicketPaginatedItems(filters, nextPage, TICKET_PAGE_SIZE, { excludeCancelled: false, excludeArchived: false }),
+                db.getTicketPaginatedItems(currentFilters, nextPage, TICKET_PAGE_SIZE, { excludeCancelled: false, excludeArchived: false }),
                 reset ? db.getProductionItemSummary() : Promise.resolve(summary)
             ]);
+            if (requestId !== activeRequestIdRef.current) return;
+
             setItems(prev => reset ? result.items : [...prev, ...result.items]);
             setTotalTickets(result.totalTickets);
             if (reset) setSummary(summaryData);
             setPage(nextPage);
         } finally {
-            setLoading(false);
-            setLoadingMore(false);
+            if (requestId === activeRequestIdRef.current) {
+                setLoading(false);
+                setLoadingMore(false);
+                if (reset) isResettingRef.current = false;
+            }
         }
     };
 
@@ -606,7 +657,10 @@ const handleDeleteItem = async (id) => {
                     </div>
                     <Button
                         variant="ghost"
-                        onClick={() => setFilters({ ticketId: '', customerName: '', productType: '', status: '', startDate: '', endDate: '' })}
+                        onClick={() => {
+                            setFilters({ ticketId: '', customerName: '', productType: '', status: '', startDate: '', endDate: '' });
+                            setDebouncedSearch({ ticketId: '', customerName: '' });
+                        }}
                         className="text-gray-500 hover:text-gray-700 bg-gray-50 px-3"
                         title="Clear Filters"
                     >
