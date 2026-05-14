@@ -1,7 +1,7 @@
 // @ts-nocheck
 "use client";
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { format } from 'date-fns';
 import { Check, ChevronDown, ChevronRight, Search, X, XSquare } from 'lucide-react';
@@ -11,6 +11,7 @@ import { Button } from '@/components/UI/Button';
 import { Badge, Table, TableCell, TableRow } from '@/components/UI/Table';
 
 const TAILOR_PAGE_SIZE = 25;
+const SEARCH_DEBOUNCE_MS = 350;
 
 export default function PendingVerification() {
     const router = useRouter();
@@ -26,6 +27,7 @@ export default function PendingVerification() {
     const [expandedGroups, setExpandedGroups] = useState({});
     const [taskOptions, setTaskOptions] = useState([]);
     const [categoryOptions, setCategoryOptions] = useState([]);
+    const activeRequestIdRef = useRef(0);
 
     const [searchCustomer, setSearchCustomer] = useState('');
     const [searchTicket, setSearchTicket] = useState('');
@@ -36,6 +38,13 @@ export default function PendingVerification() {
     const [maxAmount, setMaxAmount] = useState('');
     const [dateFrom, setDateFrom] = useState('');
     const [dateTo, setDateTo] = useState('');
+    const [debouncedSearch, setDebouncedSearch] = useState({
+        searchCustomer: '',
+        searchTicket: '',
+        searchTailor: '',
+        minAmount: '',
+        maxAmount: '',
+    });
 
     useEffect(() => {
         checkAccess();
@@ -72,7 +81,27 @@ export default function PendingVerification() {
         if (authorized) {
             loadTasks();
         }
-    }, [authorized, filter, searchCustomer, searchTicket, searchTailor, searchTask, searchCategory, minAmount, maxAmount, dateFrom, dateTo, page]);
+    }, [authorized, filter, searchTask, searchCategory, dateFrom, dateTo, page, debouncedSearch]);
+
+    useEffect(() => {
+        const debounceTimer = setTimeout(() => {
+            const nextSearch = {
+                searchCustomer,
+                searchTicket,
+                searchTailor,
+                minAmount,
+                maxAmount,
+            };
+
+            setPage(1);
+            setDebouncedSearch(prev => {
+                const unchanged = Object.keys(nextSearch).every(key => prev[key] === nextSearch[key]);
+                return unchanged ? prev : nextSearch;
+            });
+        }, SEARCH_DEBOUNCE_MS);
+
+        return () => clearTimeout(debounceTimer);
+    }, [searchCustomer, searchTicket, searchTailor, minAmount, maxAmount]);
 
     const loadFilterOptions = async () => {
         try {
@@ -88,31 +117,35 @@ export default function PendingVerification() {
     };
 
     const loadTasks = async () => {
+        const requestId = activeRequestIdRef.current + 1;
+        activeRequestIdRef.current = requestId;
         setLoading(true);
         setLoadError('');
 
         try {
             const result = await db.getAccountTasks({
                 filter,
-                searchCustomer,
-                searchTicket,
-                searchTailor,
+                ...debouncedSearch,
                 searchTask,
                 searchCategory,
-                minAmount,
-                maxAmount,
                 dateFrom,
                 dateTo,
             }, page, TAILOR_PAGE_SIZE);
+            if (requestId !== activeRequestIdRef.current) return;
+
             setTasks(result.data);
             setTotalCount(result.count);
         } catch (error) {
+            if (requestId !== activeRequestIdRef.current) return;
+
             console.error(error);
             setTasks([]);
             setTotalCount(0);
             setLoadError(error?.message || 'Unable to load account tasks.');
         } finally {
-            setLoading(false);
+            if (requestId === activeRequestIdRef.current) {
+                setLoading(false);
+            }
         }
     };
 
@@ -127,6 +160,13 @@ export default function PendingVerification() {
         setMaxAmount('');
         setDateFrom('');
         setDateTo('');
+        setDebouncedSearch({
+            searchCustomer: '',
+            searchTicket: '',
+            searchTailor: '',
+            minAmount: '',
+            maxAmount: '',
+        });
     };
 
     const hasActiveSearch =
@@ -349,7 +389,6 @@ export default function PendingVerification() {
                                 placeholder="Customer name"
                                 value={searchCustomer}
                                 onChange={(e) => {
-                                    setPage(1);
                                     setSearchCustomer(e.target.value);
                                 }}
                                 className="w-full rounded-md border border-gray-200 py-2 pl-8 pr-3 text-sm focus:outline-none focus:ring-1 focus:ring-maison-primary"
@@ -363,7 +402,6 @@ export default function PendingVerification() {
                                 placeholder="Ticket / Item key"
                                 value={searchTicket}
                                 onChange={(e) => {
-                                    setPage(1);
                                     setSearchTicket(e.target.value);
                                 }}
                                 className="w-full rounded-md border border-gray-200 py-2 pl-8 pr-3 text-sm focus:outline-none focus:ring-1 focus:ring-maison-primary"
@@ -377,7 +415,6 @@ export default function PendingVerification() {
                                 placeholder="Tailor name"
                                 value={searchTailor}
                                 onChange={(e) => {
-                                    setPage(1);
                                     setSearchTailor(e.target.value);
                                 }}
                                 className="w-full rounded-md border border-gray-200 py-2 pl-8 pr-3 text-sm focus:outline-none focus:ring-1 focus:ring-maison-primary"
@@ -421,7 +458,6 @@ export default function PendingVerification() {
                                 placeholder="Min"
                                 value={minAmount}
                                 onChange={(e) => {
-                                    setPage(1);
                                     setMinAmount(e.target.value);
                                 }}
                                 className="w-24 rounded-md border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-maison-primary"
@@ -432,7 +468,6 @@ export default function PendingVerification() {
                                 placeholder="Max"
                                 value={maxAmount}
                                 onChange={(e) => {
-                                    setPage(1);
                                     setMaxAmount(e.target.value);
                                 }}
                                 className="w-24 rounded-md border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-maison-primary"
