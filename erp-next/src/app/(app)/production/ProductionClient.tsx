@@ -30,6 +30,7 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
     const [page, setPage] = useState(1);
     const [totalTickets, setTotalTickets] = useState(0);
     const [summary, setSummary] = useState({ totalBacklog: 0, totalCompleted: 0 });
+    const [updatingStatusIds, setUpdatingStatusIds] = useState({});
     const loadMoreRef = useRef(null);
     const activeRequestIdRef = useRef(0);
     const isResettingRef = useRef(false);
@@ -159,6 +160,15 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
                 setLoadingMore(false);
                 if (reset) isResettingRef.current = false;
             }
+        }
+    };
+
+    const refreshProductionSummary = async () => {
+        try {
+            const summaryData = await db.getProductionItemSummary();
+            setSummary(summaryData);
+        } catch (err) {
+            console.error('Failed to refresh production summary:', err);
         }
     };
 
@@ -441,10 +451,38 @@ const handleDeleteItem = async (id) => {
         setAssignmentSearch(activeAssignmentDialog.mode !== 'create' ? (categoryAssignment?.tailors?.name || '') : '');
     };
 
-    const handleStatusChange = async (itemId, newStatus) => {
+    const handleStatusChange = async (item, newStatus) => {
         if (!canManageProduction) return;
-        await db.updateItemStatus(itemId, newStatus);
-        await loadItems();
+        if (!item || item.status === newStatus || updatingStatusIds[item.id]) return;
+
+        const previousStatus = item.status;
+        setUpdatingStatusIds(prev => ({ ...prev, [item.id]: true }));
+        setItems(prev => prev.map(current =>
+            current.id === item.id
+                ? { ...current, status: newStatus, raw_status: newStatus }
+                : current
+        ));
+
+        try {
+            await db.updateItemStatus(item.id, newStatus);
+            if (filters.status && filters.status !== newStatus) {
+                setItems(prev => prev.filter(current => current.id !== item.id));
+            }
+            refreshProductionSummary();
+        } catch (err) {
+            setItems(prev => prev.map(current =>
+                current.id === item.id
+                    ? { ...current, status: previousStatus, raw_status: previousStatus }
+                    : current
+            ));
+            alert(err.message || 'Failed to update item status.');
+        } finally {
+            setUpdatingStatusIds(prev => {
+                const next = { ...prev };
+                delete next[item.id];
+                return next;
+            });
+        }
     };
 
     const totalBacklog = summary.totalBacklog;
@@ -773,6 +811,7 @@ const handleDeleteItem = async (id) => {
                                             const hasAssignableProductionCategory = productionAssignmentCategories.some(category => !category.assignment);
                                             const hasEditableProductionAssignment = productionAssignmentCategories.some(category => category.assignment);
                                             const canManageItemAssignments = canManageProduction && item.status !== 'ARCHIVED';
+                                            const isStatusUpdating = Boolean(updatingStatusIds[item.id]);
 
                                             return (
                                             <TableRow key={item.id}>
@@ -800,8 +839,9 @@ const handleDeleteItem = async (id) => {
                                                         <div className="relative min-w-[210px]">
                                                             <select
                                                                 value={item.status}
-                                                                onChange={(e) => handleStatusChange(item.id, e.target.value)}
-                                                                className={`w-full appearance-none rounded-xl border px-4 py-2.5 pr-10 text-sm font-medium shadow-sm transition focus:outline-none focus:ring-2 focus:ring-maison-primary/20 ${getStatusSelectClass(item.status)}`}
+                                                                onChange={(e) => handleStatusChange(item, e.target.value)}
+                                                                disabled={isStatusUpdating}
+                                                                className={`w-full appearance-none rounded-xl border px-4 py-2.5 pr-10 text-sm font-medium shadow-sm transition focus:outline-none focus:ring-2 focus:ring-maison-primary/20 disabled:cursor-wait disabled:opacity-70 ${getStatusSelectClass(item.status)}`}
                                                             >
                                                                 <option value="IN_PRODUCTION">In Production</option>
                                                                 <option value="ARCHIVED">Archived</option>
