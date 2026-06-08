@@ -1,15 +1,17 @@
 "use client";
 
-import React from 'react';
-import { LayoutDashboard, ShoppingBag, Box, Users, Scissors, PieChart, Shirt, CheckCircle2, X } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { LayoutDashboard, ShoppingBag, Box, Users, PieChart, Shirt, CheckCircle2, X, Headset } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import clsx from 'clsx';
+import { db } from '@/services/db';
 
 const navigation = [
     { name: 'Dashboard', href: '/', icon: LayoutDashboard },
 
     // Operational
+    { name: 'Customer Service', href: '/customer-service', icon: Headset },
     { name: 'Production', href: '/production', icon: Shirt },
     { name: 'QC Queue', href: '/qc', icon: CheckCircle2 },
     { name: 'Completion', href: '/completion', icon: Box }, // Reusing Inventory icon for Receiving
@@ -22,6 +24,28 @@ const navigation = [
 
 export function Sidebar({ isOpen, onClose }) {
     const pathname = usePathname();
+    const [newItemsCount, setNewItemsCount] = useState(0);
+
+    useEffect(() => {
+        let mounted = true;
+
+        const loadNewItemsCount = async () => {
+            try {
+                const count = await db.getNewItemsCount();
+                if (mounted) setNewItemsCount(count);
+            } catch (err) {
+                if (mounted) setNewItemsCount(0);
+            }
+        };
+
+        loadNewItemsCount();
+        window.addEventListener('new-items-count:refresh', loadNewItemsCount);
+
+        return () => {
+            mounted = false;
+            window.removeEventListener('new-items-count:refresh', loadNewItemsCount);
+        };
+    }, [pathname]);
 
     return (
         <>
@@ -86,7 +110,12 @@ export function Sidebar({ isOpen, onClose }) {
                                     aria-hidden="true"
                                     strokeWidth={1.5}
                                 />
-                                {item.name}
+                                <span className="flex-1">{item.name}</span>
+                                {item.href === '/production' && newItemsCount > 0 && (
+                                    <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                                        {newItemsCount > 99 ? '99+' : newItemsCount}
+                                    </span>
+                                )}
                             </Link>
                         );
                     })}

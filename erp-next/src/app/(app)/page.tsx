@@ -76,6 +76,7 @@ export default function Dashboard() {
                 setTimeout(() => {
                     if (permissions.includes('manage_qc')) router.replace('/qc');
                     else if (permissions.includes('manage_production')) router.replace('/production');
+                    else if (permissions.includes('manage_customer_service')) router.replace('/customer-service');
                     else if (permissions.includes('manage_completion')) router.replace('/completion');
                     else if (permissions.includes('manage_payments')) router.replace('/accounts');
                     else router.replace('/unauthorized?reason=no_access');

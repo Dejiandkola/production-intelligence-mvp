@@ -7,20 +7,25 @@ import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
 import { Table, TableRow, TableCell, Badge } from '@/components/UI/Table';
 import { Modal } from '@/components/UI/Modal';
-import { CSVImporter } from '@/components/Shared/CSVImporter';
-import { Plus, Trash2, Edit2, Search, FilterX, Clock, CheckCircle2, ChevronDown, ChevronRight } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import { Search, FilterX, Clock, CheckCircle2, ChevronDown, ChevronRight } from 'lucide-react';
 import { format } from 'date-fns';
-import { CreateItemModal } from '@/components/Production/CreateItemModal';
 
 const PRODUCTION_ASSIGNMENT_CATEGORIES = ['Cutting', 'Airstay Cutting', 'Embroidery'];
 const TICKET_PAGE_SIZE = 50;
-const ITEM_STATUS_OPTIONS = ['IN_PRODUCTION', 'OUT_OF_PRODUCTION', 'ARCHIVED', 'CANCELLED'];
 const SEARCH_DEBOUNCE_MS = 350;
+const STATUS_TABS = [
+    { key: 'ALL', label: 'All', value: '' },
+    { key: 'NEW', label: 'New', value: 'NEW' },
+    { key: 'IN_PRODUCTION', label: 'In Production', value: 'IN_PRODUCTION' },
+    { key: 'OUT_OF_PRODUCTION', label: 'Out of Production', value: 'OUT_OF_PRODUCTION' },
+    { key: 'ARCHIVED', label: 'Archived', value: 'ARCHIVED' },
+];
 
-export default function ItemList({ canManageProduction, permissions = [] }: { canManageProduction: boolean, permissions?: string[] }) {
-    const router = useRouter();
-    const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+function refreshNewItemsBadge() {
+    window.dispatchEvent(new Event('new-items-count:refresh'));
+}
+
+export default function ItemList({ canManageProduction }: { canManageProduction: boolean }) {
     const [items, setItems] = useState([]);
     const [rateCards, setRateCards] = useState([]);
     const [tailors, setTailors] = useState([]);
@@ -31,6 +36,7 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
     const [totalTickets, setTotalTickets] = useState(0);
     const [summary, setSummary] = useState({ totalBacklog: 0, totalCompleted: 0 });
     const [updatingStatusIds, setUpdatingStatusIds] = useState({});
+    const [activeTab, setActiveTab] = useState('ALL');
     const loadMoreRef = useRef(null);
     const activeRequestIdRef = useRef(0);
     const isResettingRef = useRef(false);
@@ -38,7 +44,6 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
         ticketId: '',
         customerName: '',
         productType: '',
-        status: '',
         startDate: '',
         endDate: ''
     });
@@ -84,7 +89,7 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
 
     useEffect(() => {
         loadItems({ reset: true });
-    }, [filters.productType, filters.status, filters.startDate, filters.endDate, debouncedSearch]);
+    }, [activeTab, filters.productType, filters.startDate, filters.endDate, debouncedSearch]);
 
     useEffect(() => {
         const marker = loadMoreRef.current;
@@ -106,7 +111,7 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
 
         observer.observe(marker);
         return () => observer.disconnect();
-    }, [loading, loadingMore, isSearchDebouncing, items.length, page, totalTickets, filters.productType, filters.status, filters.startDate, filters.endDate, debouncedSearch]);
+    }, [loading, loadingMore, isSearchDebouncing, items.length, page, totalTickets, activeTab, filters.productType, filters.startDate, filters.endDate, debouncedSearch]);
 
     const loadPageData = async () => {
         const [summaryData, ratesData, tailorsData, productTypesData] = await Promise.all([
@@ -119,6 +124,11 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
         setRateCards(ratesData);
         setTailors(tailorsData);
         setProductTypes(productTypesData);
+    };
+
+    const getTabStatus = () => {
+        const tab = STATUS_TABS.find(entry => entry.key === activeTab);
+        return tab?.value || '';
     };
 
     const loadItems = async ({ reset = true } = {}) => {
@@ -142,7 +152,8 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
             const currentFilters = {
                 ...filters,
                 ticketId: debouncedSearch.ticketId,
-                customerName: debouncedSearch.customerName
+                customerName: debouncedSearch.customerName,
+                status: getTabStatus()
             };
             const [result, summaryData] = await Promise.all([
                 db.getTicketPaginatedItems(currentFilters, nextPage, TICKET_PAGE_SIZE, { excludeCancelled: false, excludeArchived: false }),
@@ -174,6 +185,7 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
 
     const getStatusVariant = (status) => {
         switch (status) {
+            case 'NEW': return 'warning';
             case 'IN_PRODUCTION': return 'brand';
             case 'ARCHIVED': return 'warning';
             case 'OUT_OF_PRODUCTION': return 'success';
@@ -183,6 +195,7 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
     };
 
     const getStatusLabel = (status) => {
+        if (status === 'NEW') return 'New';
         if (status === 'IN_PRODUCTION') return 'In Production';
         if (status === 'ARCHIVED') return 'Archived';
         if (status === 'OUT_OF_PRODUCTION') return 'Out of Production';
@@ -191,6 +204,8 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
 
     const getStatusSelectClass = (status) => {
         switch (status) {
+            case 'NEW':
+                return 'border-amber-200 bg-amber-50 text-amber-800';
             case 'IN_PRODUCTION':
                 return 'border-sky-200 bg-sky-50 text-sky-800';
             case 'ARCHIVED':
@@ -200,6 +215,14 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
             default:
                 return 'border-gray-200 bg-white text-gray-700';
         }
+    };
+
+    const getProductionStatusOptions = (status) => {
+        if (status === 'NEW') return ['NEW'];
+        if (status === 'IN_PRODUCTION') return ['IN_PRODUCTION', 'OUT_OF_PRODUCTION', 'NEW', 'ARCHIVED'];
+        if (status === 'OUT_OF_PRODUCTION') return ['OUT_OF_PRODUCTION', 'IN_PRODUCTION', 'ARCHIVED'];
+        if (status === 'ARCHIVED') return ['ARCHIVED', 'IN_PRODUCTION', 'OUT_OF_PRODUCTION'];
+        return [status];
     };
 
     const getCategoryBadgeClass = (categoryName) => {
@@ -290,52 +313,6 @@ export default function ItemList({ canManageProduction, permissions = [] }: { ca
     const assignmentPay = selectedAssignmentRate
         ? Number(assignmentTailorBand === 'B' ? selectedAssignmentRate.band_b_fee || 0 : selectedAssignmentRate.band_a_fee || 0).toFixed(2)
         : '0.00';
-    const [editingTicket, setEditingTicket] = useState(null);
-    const [editCustomerName, setEditCustomerName] = useState('');
-
-    const handleEditTicket = (group) => {
-        setEditingTicket(group.ticket_id);
-        setEditCustomerName(group.customer_name);
-    };
-
-    const resetTicketEdit = () => {
-        setEditingTicket(null);
-        setEditCustomerName('');
-    };
-
-    const handleSaveTicket = async (ticketId) => {
-        if (!editCustomerName.trim()) return;
-
-        try {
-            await db.updateTicket(ticketId, { customer_name: editCustomerName.trim() });
-            await loadItems();
-            resetTicketEdit();
-        } catch (err) {
-            alert(err.message);
-        }
-    };
-
-    const handleDeleteTicket = async (group) => {
-        if (!window.confirm(`Are you sure you want to permanently delete ticket ${group.ticket_id} and all ${group.items.length} item(s) under it? This cannot be undone.`)) return;
-        try {
-            await db.deleteTicket(group.realTicketId);
-            await loadItems();
-        } catch (err) {
-            alert(err.message);
-        }
-    };
-
-const handleDeleteItem = async (id) => {
-        if (!canManageProduction) {
-            alert("Master Data writes are read-only for your role.");
-            return;
-        }
-        if (window.confirm("Are you sure you want to delete this item? All associated tasks will also be removed.")) {
-            await db.deleteItem(id);
-            await loadItems();
-        }
-    };
-
     const openAssignmentForm = (item, categoryName = '', mode = 'create') => {
         const categoryAssignment = getCategoryAssignment(item, categoryName);
         const categoryId = getCategoryId(item, categoryName) || categoryAssignment?.category_type_id || '';
@@ -399,6 +376,7 @@ const handleDeleteItem = async (id) => {
         });
 
         closeAssignmentDialog();
+        refreshNewItemsBadge();
         await loadItems();
     };
 
@@ -454,6 +432,19 @@ const handleDeleteItem = async (id) => {
     const handleStatusChange = async (item, newStatus) => {
         if (!canManageProduction) return;
         if (!item || item.status === newStatus || updatingStatusIds[item.id]) return;
+        if (item.status === 'NEW') return;
+
+        const allowedStatuses = getProductionStatusOptions(item.status);
+        if (!allowedStatuses.includes(newStatus)) {
+            alert('That status change is not allowed from the current item state.');
+            return;
+        }
+
+        const returningToNew = item.status === 'IN_PRODUCTION' && newStatus === 'NEW';
+        if (returningToNew) {
+            const confirmed = window.confirm('Returning this item to New will delete any assigned production tasks that have not progressed through QC. Continue?');
+            if (!confirmed) return;
+        }
 
         const previousStatus = item.status;
         setUpdatingStatusIds(prev => ({ ...prev, [item.id]: true }));
@@ -464,11 +455,14 @@ const handleDeleteItem = async (id) => {
         ));
 
         try {
-            await db.updateItemStatus(item.id, newStatus);
-            if (filters.status && filters.status !== newStatus) {
-                setItems(prev => prev.filter(current => current.id !== item.id));
+            if (returningToNew) {
+                await db.returnItemToNew(item.id);
+            } else {
+                await db.updateItemStatus(item.id, newStatus);
             }
             refreshProductionSummary();
+            refreshNewItemsBadge();
+            await loadItems({ reset: true });
         } catch (err) {
             setItems(prev => prev.map(current =>
                 current.id === item.id
@@ -489,8 +483,6 @@ const handleDeleteItem = async (id) => {
     const totalCompleted = summary.totalCompleted;
 
     const uniqueProductTypes = productTypes.map(productType => productType.name).filter(Boolean);
-    const uniqueStatuses = ITEM_STATUS_OPTIONS;
-
     const filteredItems = items;
 
     const groupedItems = filteredItems.reduce((acc, item) => {
@@ -521,90 +513,22 @@ const handleDeleteItem = async (id) => {
                     <h1 className="text-2xl font-serif text-maison-primary">Production Items</h1>
                     <p className="text-sm text-maison-secondary">Track all physical items in the pipeline</p>
                 </div>
-                <div className="flex gap-3">
-                    {canManageProduction && (
-                        <CSVImporter
-                            onImport={async (data) => {
-                                if (!canManageProduction) {
-                                    alert("Master Data writes are read-only for your role.");
-                                    return;
-                                }
+            </div>
 
-                                let count = 0;
-                                let skipped = 0;
-                                const skippedRows = [];
-
-                                setLoading(true);
-
-                                try {
-                                    // Pre-fetch product types once
-                                    const productTypes = await db.getProductTypes();
-
-                                    for (const row of data) {
-                                        try {
-                                            const ticket_id = row['Ticket ID'];
-                                            const customer_name = row.Customer;
-                                            const productTypeName = row['Product Type'];
-                                            const quantity = parseInt(row.Quantity) || 1;
-                                            const notes = row.Notes || '';
-
-                                            // Skip invalid rows
-                                            if (!ticket_id || !customer_name || !productTypeName) {
-                                                skipped++;
-                                                skippedRows.push({ row, reason: 'Missing required fields' });
-                                                continue;
-                                            }
-
-                                            let pt = productTypes.find(
-                                                p => p.name.toLowerCase() === productTypeName.toLowerCase()
-                                            );
-
-                                            if (!pt) {
-                                                pt = await db.createProductType(productTypeName);
-                                            }
-
-                                            await db.createItem({
-                                                ticket_id,
-                                                customer_name,
-                                                product_type_id: pt.id,
-                                                quantity,
-                                                notes,
-                                                created_by_role: 'production'
-                                            });
-
-                                            count++;
-                                        } catch (rowError) {
-                                            skipped++;
-                                            skippedRows.push({
-                                                row,
-                                                reason: rowError.message || 'Row failed'
-                                            });
-
-                                            console.error('Row failed:', row, rowError);
-                                        }
-                                    }
-
-                                    await loadItems();
-
-                                    console.log('Skipped rows:', skippedRows);
-
-                                    alert(
-                                        `Import complete.\nCreated: ${count}\nSkipped: ${skipped}`
-                                    );
-                                } catch (error) {
-                                    console.error('Import failed:', error);
-                                    alert(error.message || 'Import failed.');
-                                } finally {
-                                    setLoading(false);
-                                }
-                            }}
-                        />
-                    )}
-                    <Button onClick={() => setIsCreateModalOpen(true)} disabled={!canManageProduction}>
-                        <Plus size={16} className="mr-2" />
-                        Create Item
-                    </Button>
-                </div>
+            <div className="flex flex-wrap gap-2">
+                {STATUS_TABS.map(tab => (
+                    <button
+                        key={tab.key}
+                        type="button"
+                        onClick={() => setActiveTab(tab.key)}
+                        className={`rounded-lg px-4 py-2 text-sm font-medium transition ${activeTab === tab.key
+                            ? 'bg-maison-primary text-white shadow-sm'
+                            : 'bg-white text-maison-secondary border border-gray-200 hover:bg-gray-50'
+                            }`}
+                    >
+                        {tab.label}
+                    </button>
+                ))}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -664,17 +588,6 @@ const handleDeleteItem = async (id) => {
                             {uniqueProductTypes.map(pt => <option key={pt} value={pt}>{pt}</option>)}
                         </select>
                     </div>
-                    <div className="w-full sm:w-auto min-w-[130px]">
-                        <label className="block text-xs font-semibold text-gray-500 mb-1">Status</label>
-                        <select
-                            value={filters.status}
-                            onChange={(e) => setFilters(prev => ({ ...prev, status: e.target.value }))}
-                            className="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-maison-primary/20 bg-white"
-                        >
-                            <option value="">All Statuses</option>
-                            {uniqueStatuses.map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
-                    </div>
                     <div className="w-full sm:w-auto">
                         <label className="block text-xs font-semibold text-gray-500 mb-1">Date Range</label>
                         <div className="flex items-center gap-2">
@@ -696,7 +609,7 @@ const handleDeleteItem = async (id) => {
                     <Button
                         variant="ghost"
                         onClick={() => {
-                            setFilters({ ticketId: '', customerName: '', productType: '', status: '', startDate: '', endDate: '' });
+                            setFilters({ ticketId: '', customerName: '', productType: '', startDate: '', endDate: '' });
                             setDebouncedSearch({ ticketId: '', customerName: '' });
                         }}
                         className="text-gray-500 hover:text-gray-700 bg-gray-50 px-3"
@@ -728,20 +641,9 @@ const handleDeleteItem = async (id) => {
                                         onClick={() => toggleGroup(group.ticket_id)}
                                     >
                                         <div className="flex items-center gap-4">
-                                            {editingTicket === group.ticket_id ? (
-                                                <input
-                                                    type="text"
-                                                    value={editCustomerName}
-                                                    onChange={e => setEditCustomerName(e.target.value)}
-                                                    onClick={e => e.stopPropagation()}
-                                                    className="px-2 py-1 text-sm border border-maison-primary rounded-md focus:outline-none"
-                                                    autoFocus
-                                                />
-                                            ) : (
-                                                <h3 className="font-serif font-medium text-lg text-maison-primary">
-                                                    {group.customer_name}
-                                                </h3>
-                                            )}
+                                            <h3 className="font-serif font-medium text-lg text-maison-primary">
+                                                {group.customer_name}
+                                            </h3>
                                             <span className="text-gray-300">|</span>
                                             <span className="font-mono text-sm font-medium text-gray-500">
                                                 {group.ticket_id}
@@ -757,46 +659,6 @@ const handleDeleteItem = async (id) => {
                                         </div>
                                     </div>
 
-                                    {/* Ticket actions */}
-                                    <div className="flex items-center gap-1 ml-2" onClick={e => e.stopPropagation()}>
-                                        {editingTicket === group.ticket_id ? (
-                                            <>
-                                                <button
-                                                    onClick={() => handleSaveTicket(group.realTicketId)}
-                                                    className="px-2 py-1 text-xs bg-maison-primary text-white rounded-md hover:opacity-90"
-                                                >
-                                                    Save
-                                                </button>
-                                                <button
-                                                    onClick={resetTicketEdit}
-                                                    className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700 border border-gray-200 rounded-md"
-                                                >
-                                                    Cancel
-                                                </button>
-                                            </>
-                                        ) : (
-                                            <>
-                                                {canManageProduction && (
-                                                    <button
-                                                        onClick={() => handleEditTicket(group)}
-                                                        className="p-1.5 text-gray-400 hover:text-maison-primary hover:bg-gray-100 rounded transition-colors"
-                                                        title="Edit Customer Name"
-                                                    >
-                                                        <Edit2 size={15} />
-                                                    </button>
-                                                )}
-                                                {permissions?.includes('admin') && (
-                                                    <button
-                                                        onClick={() => handleDeleteTicket(group)}
-                                                        className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
-                                                        title="Delete Ticket"
-                                                    >
-                                                        <Trash2 size={15} />
-                                                    </button>
-                                                )}
-                                            </>
-                                        )}
-                                    </div>
                                 </div>
                             </div>
 
@@ -810,7 +672,7 @@ const handleDeleteItem = async (id) => {
                                             const productionAssignmentCategories = getAvailableProductionCategories(item);
                                             const hasAssignableProductionCategory = productionAssignmentCategories.some(category => !category.assignment);
                                             const hasEditableProductionAssignment = productionAssignmentCategories.some(category => category.assignment);
-                                            const canManageItemAssignments = canManageProduction && item.status !== 'ARCHIVED';
+                                            const canManageItemAssignments = canManageProduction && ['NEW', 'IN_PRODUCTION'].includes(item.status);
                                             const isStatusUpdating = Boolean(updatingStatusIds[item.id]);
 
                                             return (
@@ -835,7 +697,7 @@ const handleDeleteItem = async (id) => {
                                                     )}
                                                 </TableCell>
                                                 <TableCell>
-                                                    {canManageProduction ? (
+                                                    {canManageProduction && item.status !== 'NEW' ? (
                                                         <div className="relative min-w-[210px]">
                                                             <select
                                                                 value={item.status}
@@ -843,9 +705,11 @@ const handleDeleteItem = async (id) => {
                                                                 disabled={isStatusUpdating}
                                                                 className={`w-full appearance-none rounded-xl border px-4 py-2.5 pr-10 text-sm font-medium shadow-sm transition focus:outline-none focus:ring-2 focus:ring-maison-primary/20 disabled:cursor-wait disabled:opacity-70 ${getStatusSelectClass(item.status)}`}
                                                             >
-                                                                <option value="IN_PRODUCTION">In Production</option>
-                                                                <option value="ARCHIVED">Archived</option>
-                                                                <option value="OUT_OF_PRODUCTION">Out of Production</option>
+                                                                {getProductionStatusOptions(item.status).map(status => (
+                                                                    <option key={status} value={status}>
+                                                                        {getStatusLabel(status)}
+                                                                    </option>
+                                                                ))}
                                                             </select>
                                                             <ChevronDown
                                                                 size={16}
@@ -897,14 +761,6 @@ const handleDeleteItem = async (id) => {
                                                             </>
                                                         )}
 
-                                                        <button
-                                                            onClick={() => handleDeleteItem(item.id)}
-                                                            disabled={!canManageProduction}
-                                                            className={`p-1.5 rounded transition-colors ${!canManageProduction ? 'text-gray-300 cursor-not-allowed' : 'text-gray-400 hover:text-red-500 hover:bg-red-50'}`}
-                                                            title="Delete Item"
-                                                        >
-                                                            <Trash2 size={16} />
-                                                        </button>
                                                     </div>
                                                 </TableCell>
                                             </TableRow>
@@ -934,14 +790,6 @@ const handleDeleteItem = async (id) => {
                                 : ''}
                 </div>
             </div>
-            {isCreateModalOpen && (
-                <CreateItemModal
-                    isOpen={isCreateModalOpen}
-                    onClose={() => setIsCreateModalOpen(false)}
-                    onSuccess={loadItems}
-                />
-            )}
-
             <Modal
                 isOpen={Boolean(activeAssignmentDialog.itemId)}
                 onClose={closeAssignmentDialog}

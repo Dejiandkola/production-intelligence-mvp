@@ -141,6 +141,12 @@ function requirePermission(ctx, perm) {
     }
 }
 
+function requireAnyPermission(ctx, perms) {
+    if (!perms.some(perm => ctx.permissions.includes(perm))) {
+        throw new PermissionDeniedError(`Requires one of: ${perms.join(', ')}`)
+    }
+}
+
 function normalizeAssignmentStatus(status) {
     if (status === 'QC_PASSED') return 'Approved'
     if (status === 'QC_FAILED') return 'Rejected'
@@ -403,6 +409,59 @@ export const db = {
             organization_id: ctx.organizationId,
             ticket_id,
             product_type_id
+        }))
+
+        const { data, error } = await supabase
+            .from('items')
+            .insert(rows)
+            .select()
+
+        if (error) {
+            console.error(error)
+            throw new Error(error.message)
+        }
+
+        return data
+    },
+
+    async createTicketCS({ ticket_number, customer_name, branch_id = null }) {
+        const ctx = await getContext()
+        requireAnyPermission(ctx, ['manage_customer_service', 'admin'])
+
+        const { data, error } = await supabase
+            .from('tickets')
+            .insert({
+                organization_id: ctx.organizationId,
+                branch_id,
+                ticket_number,
+                customer_name,
+                status: 'OPEN'
+            })
+            .select()
+            .single()
+
+        if (error) {
+            console.error(error)
+            throw new Error(error.message)
+        }
+
+        return data
+    },
+
+    async createItemsForTicketCS({ ticket_id, product_type_id, quantity = 1 }) {
+        const ctx = await getContext()
+        requireAnyPermission(ctx, ['manage_customer_service', 'admin'])
+
+        const count = Number(quantity || 0)
+        if (!ticket_id || !product_type_id || count < 1) {
+            throw new Error('Ticket, product type, and quantity are required.')
+        }
+
+        const rows = Array.from({ length: count }).map(() => ({
+            organization_id: ctx.organizationId,
+            ticket_id,
+            product_type_id,
+            status: 'NEW'
         }))
 
         const { data, error } = await supabase
@@ -1350,6 +1409,41 @@ async updateTicket(id, { customer_name }) {
         return data
     },
 
+    async updateTicketCS(id, { customer_name }) {
+        const ctx = await getContext()
+        requireAnyPermission(ctx, ['manage_customer_service', 'admin'])
+
+        const { data: items, error: itemsError } = await supabase
+            .from('items')
+            .select('id, status')
+            .eq('ticket_id', id)
+            .eq('organization_id', ctx.organizationId)
+
+        if (itemsError) {
+            console.error(itemsError)
+            throw new Error(itemsError.message)
+        }
+
+        if ((items || []).some(item => item.status !== 'NEW')) {
+            throw new Error('Ticket details can only be edited while all items are New.')
+        }
+
+        const { data, error } = await supabase
+            .from('tickets')
+            .update({ customer_name })
+            .eq('id', id)
+            .eq('organization_id', ctx.organizationId)
+            .select()
+            .single()
+
+        if (error) {
+            console.error(error)
+            throw new Error(error.message)
+        }
+
+        return data
+    },
+
     async deleteTicket(id) {
         const ctx = await getContext()
         if (!ctx.permissions.includes('admin')) {
@@ -1366,6 +1460,39 @@ async updateTicket(id, { customer_name }) {
             console.error(error)
             throw new Error(error.message)
         }
+        return true
+    },
+
+    async deleteTicketCS(id) {
+        const ctx = await getContext()
+        requireAnyPermission(ctx, ['manage_customer_service', 'admin'])
+
+        const { data: items, error: itemsError } = await supabase
+            .from('items')
+            .select('id, status')
+            .eq('ticket_id', id)
+            .eq('organization_id', ctx.organizationId)
+
+        if (itemsError) {
+            console.error(itemsError)
+            throw new Error(itemsError.message)
+        }
+
+        if ((items || []).some(item => item.status !== 'NEW')) {
+            throw new Error('Tickets can only be deleted while all items are New.')
+        }
+
+        const { error } = await supabase
+            .from('tickets')
+            .delete()
+            .eq('id', id)
+            .eq('organization_id', ctx.organizationId)
+
+        if (error) {
+            console.error(error)
+            throw new Error(error.message)
+        }
+
         return true
     },
     
@@ -1431,6 +1558,106 @@ async updateTicket(id, { customer_name }) {
         return true
     },
 
+    async updateItemProductTypeCS(itemId, productTypeId) {
+        const ctx = await getContext()
+        requireAnyPermission(ctx, ['manage_customer_service', 'admin'])
+
+        if (!productTypeId) {
+            throw new Error('Product type is required.')
+        }
+
+        const { data: item, error: fetchError } = await supabase
+            .from('items')
+            .select('id, status')
+            .eq('id', itemId)
+            .eq('organization_id', ctx.organizationId)
+            .maybeSingle()
+
+        if (fetchError) {
+            console.error(fetchError)
+            throw new Error(fetchError.message)
+        }
+
+        if (!item) throw new Error('Item not found.')
+        if (item.status !== 'NEW') {
+            throw new Error('Only New items can be edited by Customer Service.')
+        }
+
+        const { data, error } = await supabase
+            .from('items')
+            .update({ product_type_id: productTypeId })
+            .eq('id', itemId)
+            .eq('organization_id', ctx.organizationId)
+            .select()
+            .single()
+
+        if (error) {
+            console.error(error)
+            throw new Error(error.message)
+        }
+
+        return data
+    },
+
+    async deleteItemCS(itemId) {
+        const ctx = await getContext()
+        requireAnyPermission(ctx, ['manage_customer_service', 'admin'])
+
+        const { data: item, error: fetchError } = await supabase
+            .from('items')
+            .select('id, ticket_id, status')
+            .eq('id', itemId)
+            .eq('organization_id', ctx.organizationId)
+            .maybeSingle()
+
+        if (fetchError) {
+            console.error(fetchError)
+            throw new Error(fetchError.message)
+        }
+
+        if (!item) throw new Error('Item not found.')
+        if (item.status !== 'NEW') {
+            throw new Error('Only New items can be deleted by Customer Service.')
+        }
+
+        const { error: deleteError } = await supabase
+            .from('items')
+            .delete()
+            .eq('id', itemId)
+            .eq('organization_id', ctx.organizationId)
+
+        if (deleteError) {
+            console.error(deleteError)
+            throw new Error(deleteError.message)
+        }
+
+        const { count, error: countError } = await supabase
+            .from('items')
+            .select('*', { count: 'exact', head: true })
+            .eq('ticket_id', item.ticket_id)
+            .eq('organization_id', ctx.organizationId)
+
+        if (countError) {
+            console.error(countError)
+            throw new Error(countError.message)
+        }
+
+        if ((count || 0) === 0) {
+            const { error: ticketDeleteError } = await supabase
+                .from('tickets')
+                .delete()
+                .eq('id', item.ticket_id)
+                .eq('organization_id', ctx.organizationId)
+
+            if (ticketDeleteError) {
+                console.error(ticketDeleteError)
+                throw new Error(ticketDeleteError.message)
+            }
+        }
+
+        return true
+    },
+
     async getPendingPaymentsCount() {
         const ctx = await getContext()
 
@@ -1443,6 +1670,23 @@ async updateTicket(id, { customer_name }) {
         if (error) {
             console.error(error)
             return 0
+        }
+
+        return count || 0
+    },
+
+    async getNewItemsCount() {
+        const ctx = await getContext()
+
+        const { count, error } = await supabase
+            .from('items')
+            .select('*', { count: 'exact', head: true })
+            .eq('organization_id', ctx.organizationId)
+            .eq('status', 'NEW')
+
+        if (error) {
+            console.error(error)
+            throw new Error(error.message)
         }
 
         return count || 0
@@ -1545,7 +1789,7 @@ async updateTicket(id, { customer_name }) {
 
     async createWorkAssignment(payload) {
         const ctx = await getContext();
-        requirePermission(ctx, 'manage_qc');
+        requireAnyPermission(ctx, ['manage_production', 'manage_qc']);
 
         const { data, error } = await supabase.rpc('create_work_assignment', {
             p_item_id: payload.item_id,
@@ -1915,6 +2159,22 @@ async updateTicket(id, { customer_name }) {
         }
 
         return data[0]
+    },
+
+    async returnItemToNew(itemId) {
+        const ctx = await getContext()
+        requirePermission(ctx, 'manage_production')
+
+        const { error } = await supabase.rpc('return_item_to_new', {
+            p_item_id: itemId
+        })
+
+        if (error) {
+            console.error(error)
+            throw new Error(error.message)
+        }
+
+        return true
     },
 
     async updateItemReceivingStatus(itemId, isReceived) {
