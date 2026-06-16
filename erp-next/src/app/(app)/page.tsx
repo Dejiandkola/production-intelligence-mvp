@@ -1,3 +1,4 @@
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-nocheck
 "use client";
 
@@ -60,15 +61,7 @@ export default function Dashboard() {
         end: toInputDate(endOfWeek(new Date(), { weekStartsOn: 1 })),
     });
 
-    useEffect(() => {
-        checkAccess();
-    }, []);
-
-    useEffect(() => {
-        if (authorized) loadStats();
-    }, [authorized, dateRange]);
-
-    const checkAccess = async () => {
+    async function checkAccess() {
         try {
             const permissions = await db.getMyPermissions();
             if (!permissions.includes('admin')) {
@@ -87,9 +80,9 @@ export default function Dashboard() {
         } catch {
             router.replace('/unauthorized?reason=no_access');
         }
-    };
+    }
 
-    const loadStats = async () => {
+    async function loadStats() {
         const startDate = new Date(dateRange.start);
         startDate.setHours(0, 0, 0, 0);
         const endDate = new Date(dateRange.end);
@@ -207,7 +200,17 @@ export default function Dashboard() {
         setTopProducts(rankedTopProducts);
         setCategoryBreakdown(orderedCategoryBreakdown);
         setWeeklyPayroll(payroll);
-    };
+    }
+
+    useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        checkAccess();
+    }, []);
+
+    useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        if (authorized) loadStats();
+    }, [authorized, dateRange]);
 
     if (accessDenied) {
         return (

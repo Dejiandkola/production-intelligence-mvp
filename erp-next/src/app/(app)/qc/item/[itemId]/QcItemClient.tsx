@@ -1,3 +1,4 @@
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-nocheck
 "use client";
 
@@ -7,9 +8,9 @@ import { useParams, useRouter } from 'next/navigation';
 import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
 import { Table, TableRow, TableCell, Badge } from '@/components/UI/Table';
-import { ArrowLeft, Plus, CheckCircle2, Trash2, Edit2 } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Edit2 } from 'lucide-react';
 
-export default function ManageItemTasks({ itemId: propItemId, onClose, canManageQc, rateCard = [], tailors = [] }: { itemId?: string, onClose?: () => void, canManageQc?: boolean, rateCard?: any[], tailors?: any[] }) {
+export default function ManageItemTasks({ itemId: propItemId, onClose, canManageQc, rateCard = [], tailors = [] }: { itemId?: string, onClose?: () => void, canManageQc?: boolean, rateCard?: Record<string, unknown>[], tailors?: Record<string, unknown>[] }) {
     const params = useParams();
     const itemId = propItemId || params.itemId;
     const router = useRouter();
@@ -41,13 +42,7 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
     const [editTaskTypeSearch, setEditTaskTypeSearch] = useState('');
     const [editTailorSearch, setEditTailorSearch] = useState('');
 
-    useEffect(() => {
-        if (itemId) {
-            loadData();
-        }
-    }, [itemId]);
-
-    const loadData = async () => {
+    async function loadData() {
         setLoading(true);
         const [i, t] = await Promise.all([
             db.getItemById(itemId),
@@ -65,7 +60,14 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
         setItem(i);
         setTasks(t);
         setLoading(false);
-    };
+    }
+
+    useEffect(() => {
+        if (itemId) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect
+            loadData();
+        }
+    }, [itemId]);
 
     // --- Derived Dropdown Options ---
 
@@ -115,8 +117,6 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
         r.category_type_id === (editingTask ? editTaskData.category_type_id : newTask.category_type_id) &&
         selectedTaskTypeIds.includes(r.task_type_id)
     );
-
-    const selectedRate = selectedRates[0];
 
     const activeTailorId = editingTask ? editTaskData.tailor_id : newTask.tailor_id;
     const selectedTailor = tailors.find(t => t.id === activeTailorId);

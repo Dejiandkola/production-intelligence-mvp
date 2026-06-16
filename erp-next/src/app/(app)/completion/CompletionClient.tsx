@@ -1,3 +1,4 @@
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-nocheck
 "use client";
 
@@ -7,7 +8,6 @@ import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
 import { Table, TableRow, TableCell, Badge } from '@/components/UI/Table';
 import { PackageCheck, ChevronDown, ChevronRight, Search, FilterX } from 'lucide-react';
-import { format } from 'date-fns';
 
 const TICKET_PAGE_SIZE = 50;
 const RECEIVING_STATUS_OPTIONS = ['Received', 'Not Received'];

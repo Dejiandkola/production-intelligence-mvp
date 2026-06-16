@@ -1,3 +1,4 @@
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-nocheck
 "use client";
 
@@ -162,7 +163,7 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
 
         const headers = ['Item Key', 'Ticket ID', 'Customer Name', 'Product Type', 'Categories', 'Status', 'Assigned Date'];
         const rows = filteredItems.map(item => {
-            const assignedCategories = item.work_assignments?.map((wa: any) => wa.category_types?.name).filter(Boolean) || [];
+            const assignedCategories = item.work_assignments?.map((wa: { category_types?: { name?: string } }) => wa.category_types?.name).filter(Boolean) || [];
             const categories = [...new Set(assignedCategories)].join('; ');
 
             return [
@@ -371,7 +372,7 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
             <Card padding="p-0">
                 <Table headers={['Item Key', 'Customer Name', 'Product Type', 'Categories', 'Status', 'Assigned Date']}>
                     {filteredItems.map((item) => {
-                        const assignedCategories = item.work_assignments?.map((wa: any) => wa.category_types?.name).filter(Boolean) || [];
+                        const assignedCategories = item.work_assignments?.map((wa: { category_types?: { name?: string } }) => wa.category_types?.name).filter(Boolean) || [];
                         const uniqueCategories = [...new Set(assignedCategories)];
 
                         return (

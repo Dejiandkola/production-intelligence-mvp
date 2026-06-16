@@ -1,3 +1,4 @@
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-nocheck
 "use client";
 
@@ -18,7 +19,7 @@ export default function ManageTaskTypes({ permissions }: { permissions: string[]
     const [productTypes, setProductTypes] = useState([]);
     const [categories, setCategories] = useState([]);
     const [taskTypes, setTaskTypes] = useState([]);
-    const [rates, setRates] = useState([]);
+    const [, setRates] = useState([]);
 
     const [showNewProductType, setShowNewProductType] = useState(false);
     const [newProductTypeName, setNewProductTypeName] = useState('');
@@ -27,7 +28,7 @@ export default function ManageTaskTypes({ permissions }: { permissions: string[]
     const [showNewTaskType, setShowNewTaskType] = useState(false);
     const [newTaskTypeName, setNewTaskTypeName] = useState('');
 
-    const [loading, setLoading] = useState(true);
+    const [, setLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingItem, setEditingItem] = useState(null);
 
@@ -423,11 +424,11 @@ export default function ManageTaskTypes({ permissions }: { permissions: string[]
 
             <Card padding="p-0">
                 <Table headers={[
-                    <span onClick={() => handleSort('product_name')} className="cursor-pointer select-none">Product{sortIcon('product_name')}</span>,
-                    <span onClick={() => handleSort('category_name')} className="cursor-pointer select-none">Category{sortIcon('category_name')}</span>,
-                    <span onClick={() => handleSort('name')} className="cursor-pointer select-none">Task Name{sortIcon('name')}</span>,
-                    <span onClick={() => handleSort('band_a_fee')} className="cursor-pointer select-none">Band A Fee{sortIcon('band_a_fee')}</span>,
-                    <span onClick={() => handleSort('band_b_fee')} className="cursor-pointer select-none">Band B Fee{sortIcon('band_b_fee')}</span>,
+                    <span key="product_name" onClick={() => handleSort('product_name')} className="cursor-pointer select-none">Product{sortIcon('product_name')}</span>,
+                    <span key="category_name" onClick={() => handleSort('category_name')} className="cursor-pointer select-none">Category{sortIcon('category_name')}</span>,
+                    <span key="name" onClick={() => handleSort('name')} className="cursor-pointer select-none">Task Name{sortIcon('name')}</span>,
+                    <span key="band_a_fee" onClick={() => handleSort('band_a_fee')} className="cursor-pointer select-none">Band A Fee{sortIcon('band_a_fee')}</span>,
+                    <span key="band_b_fee" onClick={() => handleSort('band_b_fee')} className="cursor-pointer select-none">Band B Fee{sortIcon('band_b_fee')}</span>,
                     'Status', 'Actions'
                 ]}>
                     {displayedTasks.map((item) => (

@@ -41,9 +41,13 @@ export async function getUserPermissions() {
   }
 
   // Define typing ad-hoc
-  type RolePermsRow = { permissions: { name: string } };
-  const rp = (data.roles as any).role_permissions as RolePermsRow[];
-  const permissions: string[] = rp.map(item => item.permissions.name);
+  type RolePermsRow = { permissions: { name: string } | null };
+  type RolesPayload = { role_permissions?: RolePermsRow[] };
+  const roles = data.roles as RolesPayload;
+  const rp = roles.role_permissions || [];
+  const permissions: string[] = rp
+    .map(item => item.permissions?.name)
+    .filter((name): name is string => Boolean(name));
 
   return { user, permissions }
 }

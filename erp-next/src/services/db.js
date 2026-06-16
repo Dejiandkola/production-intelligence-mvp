@@ -129,12 +129,6 @@ async function getContext() {
     return ctx
 }
 
-function requireOrg(ctx) {
-    if (!ctx || !ctx.organizationId) {
-        throw new Error("Missing organization context")
-    }
-}
-
 function requirePermission(ctx, perm) {
     if (!ctx.permissions.includes(perm)) {
         throw new PermissionDeniedError(`Requires ${perm} permission`)

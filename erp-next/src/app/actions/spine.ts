@@ -1,7 +1,6 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
-import { hasPermission } from '@/lib/auth/permissions'
 
 // We wrap the DB RPC calls in Server Actions so the Next.js frontend can call them easily 
 // and securely, allowing the frontend to ignore DB mechanics entirely.

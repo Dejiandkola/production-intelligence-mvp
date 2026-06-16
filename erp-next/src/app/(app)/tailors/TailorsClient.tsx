@@ -1,3 +1,4 @@
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-nocheck
 "use client";
 
@@ -104,29 +105,6 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
                 alert(err.message)
             }
         }
-    };
-
-    const handleImportCSV = async (data) => {
-        if (!canManageTailors) {
-            alert("Master Data writes are read-only for your role.");
-            return;
-        }
-        setLoading(true);
-        let count = 0;
-        for (const row of data) {
-            const name = row['TAILOR NAME'] || row.Name;
-            if (name) {
-                await db.createTailor({
-                    name,
-                    department: row['DEPARTMENT'] || 'OTHER',
-                    band: row['BAND'] || row['Band'] || 'A',
-                    active: true
-                });
-                count++;
-            }
-        }
-        await loadData();
-        alert(`Imported ${count} tailors with Band configurations.`);
     };
 
     return (

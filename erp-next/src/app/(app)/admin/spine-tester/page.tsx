@@ -12,9 +12,11 @@ import {
     cancelTicketAction,
 } from '../../../actions/spine'
 
+type ActionResult = { success: true; data: unknown } | { success: false; error: string }
+
 export default function SpineTester() {
     const [loading, setLoading] = useState(false)
-    const [result, setResult] = useState<any>(null)
+    const [result, setResult] = useState<ActionResult | null>(null)
 
     const [itemId, setItemId] = useState('')
     const [categoryTypeId, setCategoryTypeId] = useState('')
@@ -35,14 +37,15 @@ export default function SpineTester() {
         })
     }, [])
 
-    const handleAction = async (actionFn: () => Promise<any>) => {
+    const handleAction = async (actionFn: () => Promise<unknown>) => {
         setLoading(true)
         setResult(null)
         try {
             const res = await actionFn()
             setResult({ success: true, data: res })
-        } catch (err: any) {
-            setResult({ success: false, error: err?.message ?? String(err) })
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err)
+            setResult({ success: false, error: message })
         } finally {
             setLoading(false)
         }

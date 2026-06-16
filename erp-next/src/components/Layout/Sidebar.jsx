@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { LayoutDashboard, ShoppingBag, Box, Users, PieChart, Shirt, CheckCircle2, X, Headset } from 'lucide-react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import clsx from 'clsx';
 import { db } from '@/services/db';
@@ -69,7 +70,7 @@ export function Sidebar({ isOpen, onClose }) {
                 <div className="flex items-center justify-between px-6 h-20">
                     <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-md overflow-hidden flex items-center justify-center shrink-0">
-                            <img src="/logo.png" alt="Deji and Kola" className="w-full h-full object-contain" />
+                            <Image src="/logo.png" alt="Deji and Kola" width={40} height={40} className="w-full h-full object-contain" />
                         </div>
                         <div>
                             <h1 className="font-serif text-lg font-medium leading-none">Deji & Kola</h1>
