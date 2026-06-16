@@ -1,28 +1,55 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { WifiOff } from 'lucide-react';
 
+function subscribeOnlineStatus(callback: () => void) {
+    if (typeof window === 'undefined') return () => {};
+
+    window.addEventListener('online', callback);
+    window.addEventListener('offline', callback);
+
+    return () => {
+        window.removeEventListener('online', callback);
+        window.removeEventListener('offline', callback);
+    };
+}
+
+function getOnlineSnapshot() {
+    return typeof navigator === 'undefined' ? true : navigator.onLine;
+}
+
+function getServerOnlineSnapshot() {
+    return true;
+}
+
 export function OfflineBanner() {
-    const [isOffline, setIsOffline] = useState(() => typeof navigator !== 'undefined' && !navigator.onLine);
+    const isOnline = useSyncExternalStore(
+        subscribeOnlineStatus,
+        getOnlineSnapshot,
+        getServerOnlineSnapshot
+    );
+    const isOffline = !isOnline;
     const [showReconnected, setShowReconnected] = useState(false);
 
     useEffect(() => {
+        let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+
         const handleOffline = () => {
-            setIsOffline(true);
             setShowReconnected(false);
         };
 
         const handleOnline = () => {
-            setIsOffline(false);
             setShowReconnected(true);
-            setTimeout(() => setShowReconnected(false), 3000);
+            if (reconnectTimer) clearTimeout(reconnectTimer);
+            reconnectTimer = setTimeout(() => setShowReconnected(false), 3000);
         };
 
         window.addEventListener('offline', handleOffline);
         window.addEventListener('online', handleOnline);
 
         return () => {
+            if (reconnectTimer) clearTimeout(reconnectTimer);
             window.removeEventListener('offline', handleOffline);
             window.removeEventListener('online', handleOnline);
         };
@@ -42,9 +69,7 @@ export function OfflineBanner() {
                     You are offline. Please check your connection.
                 </>
             ) : (
-                <>
-                    ✓ Back online
-                </>
+                <>Back online</>
             )}
         </div>
     );
