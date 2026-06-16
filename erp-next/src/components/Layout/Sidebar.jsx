@@ -33,7 +33,7 @@ export function Sidebar({ isOpen, onClose }) {
             try {
                 const count = await db.getNewItemsCount();
                 if (mounted) setNewItemsCount(count);
-            } catch (err) {
+            } catch {
                 if (mounted) setNewItemsCount(0);
             }
         };
