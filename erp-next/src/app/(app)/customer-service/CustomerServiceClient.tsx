@@ -9,6 +9,7 @@ import { Button } from '@/components/UI/Button';
 import { Modal } from '@/components/UI/Modal';
 import { Badge, Table, TableCell, TableRow } from '@/components/UI/Table';
 import { ChevronDown, ChevronRight, Edit2, FilterX, Plus, Search, Trash2 } from 'lucide-react';
+import { format } from 'date-fns';
 
 const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 350;
@@ -47,6 +48,26 @@ function getStatusVariant(status) {
 
 function emptyProductRow() {
     return { product_type_id: '', quantity: 1 };
+}
+
+function getCategoryBadgeClass(categoryName) {
+    const normalized = (categoryName || '').trim().toLowerCase();
+
+    if (normalized === 'sewing') return 'bg-sky-50 text-sky-700';
+    if (normalized === 'amendment') return 'bg-rose-50 text-rose-700';
+    if (normalized === 'laundry') return 'bg-emerald-50 text-emerald-700';
+
+    const palette = [
+        'bg-amber-50 text-amber-700',
+        'bg-sky-50 text-sky-700',
+        'bg-emerald-50 text-emerald-700',
+        'bg-rose-50 text-rose-700',
+        'bg-violet-50 text-violet-700',
+        'bg-orange-50 text-orange-700',
+    ];
+
+    const value = (categoryName || '').split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
+    return palette[value % palette.length];
 }
 
 export default function CustomerServiceClient({ permissions = [] }: { permissions?: string[] }) {
@@ -461,91 +482,113 @@ export default function CustomerServiceClient({ permissions = [] }: { permission
                 {!loading && Object.values(groupedItems).map(group => {
                     const isExpanded = expandedGroups[group.ticket_number] ?? true;
                     const allNew = ticketAllNew(group);
+                    const newItemsCount = group.items.filter(item => item.status === 'NEW' || item.raw_status === 'NEW').length;
 
                     return (
                         <Card key={group.ticket_number} padding="p-0" className="overflow-hidden border border-gray-200">
-                            <div className="flex flex-col gap-3 border-b border-gray-100 bg-white px-4 py-4 md:flex-row md:items-center md:justify-between">
-                                <button
-                                    type="button"
-                                    onClick={() => setExpandedGroups(prev => ({ ...prev, [group.ticket_number]: !isExpanded }))}
-                                    className="flex min-w-0 items-center gap-3 text-left"
-                                >
-                                    {isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-                                    <div className="min-w-0">
-                                        <div className="flex flex-wrap items-center gap-2">
-                                            <span className="font-mono text-sm font-semibold text-maison-primary">{group.ticket_number}</span>
-                                            <Badge variant={allNew ? 'warning' : 'neutral'}>{group.items.length} item{group.items.length === 1 ? '' : 's'}</Badge>
-                                        </div>
-                                        <p className="mt-1 text-sm text-maison-secondary">
+                            <div
+                                className={`flex items-center justify-between p-3 transition-colors ${isExpanded ? 'bg-gray-50 border-b border-gray-200' : 'hover:bg-gray-50'}`}
+                            >
+                                <div className="flex w-full items-center gap-3">
+                                    <div
+                                        className="min-w-5 cursor-pointer text-maison-primary"
+                                        onClick={() => setExpandedGroups(prev => ({ ...prev, [group.ticket_number]: !isExpanded }))}
+                                    >
+                                        {isExpanded ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
+                                    </div>
+                                    <div
+                                        className="flex flex-1 cursor-pointer items-center justify-between"
+                                        onClick={() => setExpandedGroups(prev => ({ ...prev, [group.ticket_number]: !isExpanded }))}
+                                    >
+                                        <div className="flex items-center gap-4">
                                             {editingTicket === group.ticket_id ? (
                                                 <input
                                                     value={editCustomerName}
                                                     onChange={(event) => setEditCustomerName(event.target.value)}
                                                     onClick={(event) => event.stopPropagation()}
-                                                    className="rounded-md border border-gray-200 px-2 py-1 text-sm"
+                                                    className="rounded-md border border-gray-200 px-2 py-1 text-lg"
                                                 />
                                             ) : (
-                                                group.customer_name || 'No customer reference'
+                                                <h3 className="font-serif text-lg font-medium text-maison-primary">
+                                                    {group.customer_name || 'No customer reference'}
+                                                </h3>
                                             )}
-                                        </p>
+                                            <span className="text-gray-300">|</span>
+                                            <span className="font-mono text-sm font-medium text-gray-500">
+                                                {group.ticket_number}
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center gap-4">
+                                            <span className="text-sm text-maison-secondary">
+                                                {group.items.length} {group.items.length === 1 ? 'Product' : 'Products'} Total
+                                            </span>
+                                            <Badge variant={newItemsCount === group.items.length ? 'warning' : 'neutral'}>
+                                                {newItemsCount} / {group.items.length} New
+                                            </Badge>
+                                        </div>
                                     </div>
-                                </button>
 
-                                <div className="flex flex-wrap items-center gap-2">
-                                    {canManageCustomerService && (
-                                        <Button size="sm" variant="secondary" onClick={() => openCreateForTicket(group)}>
-                                            <Plus size={14} className="mr-1" />
-                                            Add Item
-                                        </Button>
-                                    )}
-                                    {canManageCustomerService && editingTicket === group.ticket_id ? (
-                                        <>
-                                            <Button size="sm" onClick={() => saveTicketEdit(group.ticket_id)}>Save</Button>
-                                            <Button size="sm" variant="ghost" onClick={() => setEditingTicket(null)}>Cancel</Button>
-                                        </>
-                                    ) : canManageCustomerService && (
-                                        <>
-                                            <button
-                                                type="button"
-                                                onClick={() => startTicketEdit(group)}
-                                                disabled={!allNew}
-                                                title={allNew ? 'Edit customer reference' : 'Ticket is locked after production starts'}
-                                                className={`rounded p-1.5 transition ${allNew ? 'text-gray-400 hover:bg-gray-50 hover:text-maison-primary' : 'text-gray-300 cursor-not-allowed'}`}
-                                            >
-                                                <Edit2 size={16} />
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => deleteTicket(group)}
-                                                disabled={!allNew}
-                                                title={allNew ? 'Delete ticket' : 'Ticket is locked after production starts'}
-                                                className={`rounded p-1.5 transition ${allNew ? 'text-red-400 hover:bg-red-50 hover:text-red-600' : 'text-gray-300 cursor-not-allowed'}`}
-                                            >
-                                                <Trash2 size={16} />
-                                            </button>
-                                        </>
-                                    )}
+                                    <div className="ml-3 flex flex-wrap items-center gap-2" onClick={(event) => event.stopPropagation()}>
+                                        {canManageCustomerService && (
+                                            <Button size="sm" variant="secondary" onClick={() => openCreateForTicket(group)}>
+                                                <Plus size={14} className="mr-1" />
+                                                Add Item
+                                            </Button>
+                                        )}
+                                        {canManageCustomerService && editingTicket === group.ticket_id ? (
+                                            <>
+                                                <Button size="sm" onClick={() => saveTicketEdit(group.ticket_id)}>Save</Button>
+                                                <Button size="sm" variant="ghost" onClick={() => setEditingTicket(null)}>Cancel</Button>
+                                            </>
+                                        ) : canManageCustomerService && (
+                                            <>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => startTicketEdit(group)}
+                                                    disabled={!allNew}
+                                                    title={allNew ? 'Edit customer reference' : 'Ticket is locked after production starts'}
+                                                    className={`rounded p-1.5 transition ${allNew ? 'text-gray-400 hover:bg-gray-100 hover:text-maison-primary' : 'cursor-not-allowed text-gray-300'}`}
+                                                >
+                                                    <Edit2 size={16} />
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => deleteTicket(group)}
+                                                    disabled={!allNew}
+                                                    title={allNew ? 'Delete ticket' : 'Ticket is locked after production starts'}
+                                                    className={`rounded p-1.5 transition ${allNew ? 'text-gray-400 hover:bg-red-50 hover:text-red-600' : 'cursor-not-allowed text-gray-300'}`}
+                                                >
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            </>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
 
                             {isExpanded && (
-                                <Table headers={['Item Key', 'Product Type', 'Status', 'Assignments', 'Actions']} className="rounded-none border-0">
+                                <div className="bg-white">
+                                <Table headers={['Item Key', 'Product', 'Categories', 'Status', 'Date', 'Actions']}>
                                     {group.items.map(item => {
                                         const isNew = itemIsNew(item);
                                         const assignmentNames = item.work_assignments?.map(assignment => assignment.category_types?.name).filter(Boolean) || [];
+                                        const uniqueCategories = [...new Set(assignmentNames)];
 
                                         return (
                                             <TableRow key={item.id}>
                                                 <TableCell className="font-mono text-xs font-medium">{item.item_key || '-'}</TableCell>
                                                 <TableCell>{item.product_type_name}</TableCell>
-                                                <TableCell>
-                                                    <Badge variant={getStatusVariant(item.status)}>{getStatusLabel(item.status)}</Badge>
-                                                </TableCell>
                                                 <TableCell className="whitespace-normal">
-                                                    {assignmentNames.length > 0 ? (
+                                                    {uniqueCategories.length > 0 ? (
                                                         <div className="flex flex-wrap gap-1">
-                                                            {[...new Set(assignmentNames)].map(name => (
-                                                                <Badge key={name} variant="neutral">{name}</Badge>
+                                                            {uniqueCategories.map(name => (
+                                                                <Badge
+                                                                    key={name}
+                                                                    variant="neutral"
+                                                                    className={getCategoryBadgeClass(name)}
+                                                                >
+                                                                    {name}
+                                                                </Badge>
                                                             ))}
                                                         </div>
                                                     ) : (
@@ -553,7 +596,13 @@ export default function CustomerServiceClient({ permissions = [] }: { permission
                                                     )}
                                                 </TableCell>
                                                 <TableCell>
-                                                    <div className="flex items-center gap-2">
+                                                    <Badge variant={getStatusVariant(item.status)}>{getStatusLabel(item.status)}</Badge>
+                                                </TableCell>
+                                                <TableCell className="text-sm text-gray-500">
+                                                    {item.created_at ? format(new Date(item.created_at), 'MMM d, yyyy') : '-'}
+                                                </TableCell>
+                                                <TableCell>
+                                                    <div className="flex flex-wrap items-center gap-2">
                                                         {canManageCustomerService && (
                                                             <>
                                                                 <button
@@ -561,7 +610,7 @@ export default function CustomerServiceClient({ permissions = [] }: { permission
                                                                     onClick={() => openItemEdit(item)}
                                                                     disabled={!isNew}
                                                                     title={isNew ? 'Edit item' : 'Only New items can be edited'}
-                                                                    className={`rounded p-1.5 transition ${isNew ? 'text-gray-400 hover:bg-gray-50 hover:text-maison-primary' : 'text-gray-300 cursor-not-allowed'}`}
+                                                                    className={`rounded p-1.5 transition ${isNew ? 'text-gray-400 hover:bg-gray-100 hover:text-maison-primary' : 'cursor-not-allowed text-gray-300'}`}
                                                                 >
                                                                     <Edit2 size={16} />
                                                                 </button>
@@ -570,7 +619,7 @@ export default function CustomerServiceClient({ permissions = [] }: { permission
                                                                     onClick={() => deleteItem(item)}
                                                                     disabled={!isNew}
                                                                     title={isNew ? 'Delete item' : 'Only New items can be deleted'}
-                                                                    className={`rounded p-1.5 transition ${isNew ? 'text-red-400 hover:bg-red-50 hover:text-red-600' : 'text-gray-300 cursor-not-allowed'}`}
+                                                                    className={`rounded p-1.5 transition ${isNew ? 'text-gray-400 hover:bg-red-50 hover:text-red-600' : 'cursor-not-allowed text-gray-300'}`}
                                                                 >
                                                                     <Trash2 size={16} />
                                                                 </button>
@@ -582,6 +631,7 @@ export default function CustomerServiceClient({ permissions = [] }: { permission
                                         );
                                     })}
                                 </Table>
+                                </div>
                             )}
                         </Card>
                     );

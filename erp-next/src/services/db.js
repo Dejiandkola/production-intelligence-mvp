@@ -1686,6 +1686,30 @@ async updateTicket(id, { customer_name }) {
         return count || 0
     },
 
+    async getActivityLogs(filters = {}, page = 1, pageSize = 50) {
+        await getContext()
+
+        const { data, error } = await supabase.rpc('get_activity_log_entries', {
+            p_search: filters.search || null,
+            p_category: filters.category || 'all',
+            p_action: filters.action || null,
+            p_start_date: toDateBoundary(filters.startDate, 'start'),
+            p_end_date: toDateBoundary(filters.endDate, 'end'),
+            p_page: page,
+            p_page_size: pageSize
+        })
+
+        if (error) {
+            throw new Error(error.message)
+        }
+
+        const rows = data || []
+        return {
+            data: rows,
+            count: Number(rows[0]?.total_count || 0)
+        }
+    },
+
     async getPayrollEntries(startDate, endDate) {
         const ctx = await getContext()
         const rangeStart = toDateBoundary(startDate, 'start')

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
-import { LayoutDashboard, ShoppingBag, Box, Users, PieChart, Shirt, CheckCircle2, X, Headset } from 'lucide-react';
+import { LayoutDashboard, ShoppingBag, Box, Users, PieChart, Shirt, CheckCircle2, X, Headset, History } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
@@ -17,6 +17,7 @@ const navigation = [
     { name: 'QC Queue', href: '/qc', icon: CheckCircle2 },
     { name: 'Completion', href: '/completion', icon: Box }, // Reusing Inventory icon for Receiving
     { name: 'Accounts', href: '/accounts', icon: ShoppingBag }, // Reusing Orders icon/spot for Accounts
+    { name: 'Activity Log', href: '/activity-log', icon: History },
 
     // Admin / Master Data
     { name: 'Tailors', href: '/tailors', icon: Users },
