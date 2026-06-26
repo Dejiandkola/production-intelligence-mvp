@@ -47,7 +47,7 @@ function getStatusVariant(status) {
 }
 
 function emptyProductRow() {
-    return { product_type_id: '', quantity: 1 };
+    return { product_type_id: '', quantity: 1, custom_values: {} };
 }
 
 function getCategoryBadgeClass(categoryName) {
@@ -77,6 +77,7 @@ export default function CustomerServiceClient({ permissions = [] }: { permission
 
     const [items, setItems] = useState([]);
     const [productTypes, setProductTypes] = useState([]);
+    const [customFields, setCustomFields] = useState([]);
     const [loading, setLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
     const [page, setPage] = useState(1);
@@ -107,6 +108,7 @@ export default function CustomerServiceClient({ permissions = [] }: { permission
     const [editCustomerName, setEditCustomerName] = useState('');
     const [editingItem, setEditingItem] = useState(null);
     const [editProductTypeId, setEditProductTypeId] = useState('');
+    const [editCustomValues, setEditCustomValues] = useState({});
 
     useEffect(() => {
         loadPageData();
@@ -124,8 +126,12 @@ export default function CustomerServiceClient({ permissions = [] }: { permission
     }, [activeTab, debouncedFilters]);
 
     const loadPageData = async () => {
-        const productTypesData = await db.getProductTypes();
+        const [productTypesData, customFieldsData] = await Promise.all([
+            db.getProductTypes(),
+            db.getActiveCustomFields('items')
+        ]);
         setProductTypes(productTypesData);
+        setCustomFields(customFieldsData);
     };
 
     const getTabStatus = () => {
@@ -230,13 +236,26 @@ export default function CustomerServiceClient({ permissions = [] }: { permission
         ));
     };
 
+    const handleProductRowCustomValueChange = (index, fieldId, value) => {
+        setProductRows(prev => prev.map((row, rowIndex) => (
+            rowIndex === index
+                ? { ...row, custom_values: { ...(row.custom_values || {}), [fieldId]: value } }
+                : row
+        )));
+    };
+
+    const handleEditCustomValueChange = (fieldId, value) => {
+        setEditCustomValues(prev => ({ ...prev, [fieldId]: value }));
+    };
+
     const handleSubmitCreate = async (event) => {
         event.preventDefault();
         if (!canManageCustomerService) return;
 
         const cleanedProducts = productRows.map(row => ({
             product_type_id: row.product_type_id,
-            quantity: Number(row.quantity)
+            quantity: Number(row.quantity),
+            custom_values: row.custom_values || {}
         }));
 
         if (!ticketForm.ticket_number.trim()) {
@@ -273,7 +292,8 @@ export default function CustomerServiceClient({ permissions = [] }: { permission
                 await db.createItemsForTicketCS({
                     ticket_id: ticket.id,
                     product_type_id: product.product_type_id,
-                    quantity: product.quantity
+                    quantity: product.quantity,
+                    custom_values: product.custom_values
                 });
             }
 
@@ -330,7 +350,7 @@ export default function CustomerServiceClient({ permissions = [] }: { permission
         }
     };
 
-    const openItemEdit = (item) => {
+    const openItemEdit = async (item) => {
         if (!canManageCustomerService) return;
         if (!itemIsNew(item)) {
             alert('Only New items can be edited by Customer Service.');
@@ -338,14 +358,22 @@ export default function CustomerServiceClient({ permissions = [] }: { permission
         }
         setEditingItem(item);
         setEditProductTypeId(item.product_type_id || '');
+        try {
+            const values = await db.getItemCustomFieldValues(item.id);
+            setEditCustomValues(values || {});
+        } catch {
+            setEditCustomValues({});
+        }
     };
 
     const saveItemEdit = async () => {
         if (!editingItem || !editProductTypeId) return;
         try {
             await db.updateItemProductTypeCS(editingItem.id, editProductTypeId);
+            await db.saveItemCustomFieldValues(editingItem.id, editCustomValues);
             setEditingItem(null);
             setEditProductTypeId('');
+            setEditCustomValues({});
             await loadItems({ reset: true });
             refreshNewItemsBadge();
         } catch (error) {
@@ -369,6 +397,77 @@ export default function CustomerServiceClient({ permissions = [] }: { permission
         }
     };
 
+    const renderCustomFieldInput = (field, value, onChange) => {
+        const label = `${field.label}${field.required ? ' *' : ''}`;
+        const baseClass = "block w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-maison-primary/20";
+
+        if (field.field_type === 'long_text') {
+            return (
+                <div key={field.id}>
+                    <label className="mb-1.5 block text-sm font-medium text-maison-secondary">{label}</label>
+                    <textarea
+                        value={value || ''}
+                        onChange={(event) => onChange(event.target.value)}
+                        required={field.required}
+                        rows={3}
+                        className={baseClass}
+                    />
+                </div>
+            );
+        }
+
+        if (field.field_type === 'dropdown') {
+            return (
+                <div key={field.id}>
+                    <label className="mb-1.5 block text-sm font-medium text-maison-secondary">{label}</label>
+                    <select
+                        value={value || ''}
+                        onChange={(event) => onChange(event.target.value)}
+                        required={field.required}
+                        className={baseClass}
+                    >
+                        <option value="">Select...</option>
+                        {(field.options || []).map(option => (
+                            <option key={option.id} value={option.id}>{option.label}</option>
+                        ))}
+                    </select>
+                </div>
+            );
+        }
+
+        if (field.field_type === 'checkbox') {
+            return (
+                <label key={field.id} className="flex items-center gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm text-maison-secondary">
+                    <input
+                        type="checkbox"
+                        checked={Boolean(value)}
+                        onChange={(event) => onChange(event.target.checked)}
+                    />
+                    {label}
+                </label>
+            );
+        }
+
+        const inputType = field.field_type === 'number'
+            ? 'number'
+            : field.field_type === 'date'
+                ? 'date'
+                : 'text';
+
+        return (
+            <div key={field.id}>
+                <label className="mb-1.5 block text-sm font-medium text-maison-secondary">{label}</label>
+                <input
+                    type={inputType}
+                    value={value || ''}
+                    onChange={(event) => onChange(event.target.value)}
+                    required={field.required}
+                    className={baseClass}
+                    step={field.field_type === 'number' ? 'any' : undefined}
+                />
+            </div>
+        );
+    };
     const clearFilters = () => {
         setFilters({
             ticketId: '',
@@ -698,36 +797,48 @@ export default function CustomerServiceClient({ permissions = [] }: { permission
                         </div>
 
                         {productRows.map((row, index) => (
-                            <div key={index} className="grid grid-cols-1 gap-3 rounded-lg border border-gray-100 bg-gray-50 p-3 md:grid-cols-[1fr_120px_40px]">
-                                <select
-                                    value={row.product_type_id}
-                                    onChange={(event) => handleProductRowChange(index, 'product_type_id', event.target.value)}
-                                    required
-                                    className="rounded-md border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-maison-primary/20"
-                                >
-                                    <option value="">Select product...</option>
-                                    {productTypes.map(product => (
-                                        <option key={product.id} value={product.id}>{product.name}</option>
-                                    ))}
-                                </select>
-                                <input
-                                    type="number"
-                                    min="1"
-                                    max="50"
-                                    value={row.quantity}
-                                    onChange={(event) => handleProductRowChange(index, 'quantity', event.target.value)}
-                                    required
-                                    className="rounded-md border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-maison-primary/20"
-                                />
-                                <button
-                                    type="button"
-                                    disabled={productRows.length === 1}
-                                    onClick={() => setProductRows(prev => prev.filter((_, rowIndex) => rowIndex !== index))}
-                                    className="rounded-md p-2 text-gray-400 transition hover:bg-red-50 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-40"
-                                    title="Remove product row"
-                                >
-                                    <Trash2 size={16} />
-                                </button>
+                            <div key={index} className="space-y-3 rounded-lg border border-gray-100 bg-gray-50 p-3">
+                                <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_120px_40px]">
+                                    <select
+                                        value={row.product_type_id}
+                                        onChange={(event) => handleProductRowChange(index, 'product_type_id', event.target.value)}
+                                        required
+                                        className="rounded-md border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-maison-primary/20"
+                                    >
+                                        <option value="">Select product...</option>
+                                        {productTypes.map(product => (
+                                            <option key={product.id} value={product.id}>{product.name}</option>
+                                        ))}
+                                    </select>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        max="50"
+                                        value={row.quantity}
+                                        onChange={(event) => handleProductRowChange(index, 'quantity', event.target.value)}
+                                        required
+                                        className="rounded-md border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-maison-primary/20"
+                                    />
+                                    <button
+                                        type="button"
+                                        disabled={productRows.length === 1}
+                                        onClick={() => setProductRows(prev => prev.filter((_, rowIndex) => rowIndex !== index))}
+                                        className="rounded-md p-2 text-gray-400 transition hover:bg-red-50 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-40"
+                                        title="Remove product row"
+                                    >
+                                        <Trash2 size={16} />
+                                    </button>
+                                </div>
+
+                                {customFields.length > 0 && (
+                                    <div className="grid grid-cols-1 gap-3 border-t border-gray-200 pt-3 md:grid-cols-2">
+                                        {customFields.map(field => renderCustomFieldInput(
+                                            field,
+                                            row.custom_values?.[field.id],
+                                            (value) => handleProductRowCustomValueChange(index, field.id, value)
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         ))}
                     </div>
@@ -766,6 +877,18 @@ export default function CustomerServiceClient({ permissions = [] }: { permission
                                 ))}
                             </select>
                         </div>
+                        {customFields.length > 0 && (
+                            <div className="space-y-3 rounded-lg border border-gray-100 bg-gray-50 p-4">
+                                <div className="text-sm font-medium text-maison-secondary">Custom Fields</div>
+                                <div className="grid grid-cols-1 gap-3">
+                                    {customFields.map(field => renderCustomFieldInput(
+                                        field,
+                                        editCustomValues[field.id],
+                                        (value) => handleEditCustomValueChange(field.id, value)
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                         <div className="flex justify-end gap-2">
                             <Button variant="ghost" onClick={() => setEditingItem(null)}>Cancel</Button>
                             <Button onClick={saveItemEdit} disabled={!editProductTypeId}>Save</Button>

@@ -12,6 +12,7 @@ import { Input } from '@/components/UI/Input';
 import { CSVImporter } from '@/components/Shared/CSVImporter';
 import { Plus, Edit2, Trash2, Power, PowerOff } from 'lucide-react';
 import { hasPerm } from '@/lib/permissions';
+import { formatMoney } from '@/lib/formatters';
 
 export default function ManageTaskTypes({ permissions }: { permissions: string[] }) {
     const canManageRates = hasPerm(permissions, 'manage_rates');
@@ -436,8 +437,8 @@ export default function ManageTaskTypes({ permissions }: { permissions: string[]
                             <TableCell>{item.product_name}</TableCell>
                             <TableCell>{item.category_name}</TableCell>
                             <TableCell className="font-medium">{item.name}</TableCell>
-                            <TableCell>₦{parseFloat(item.band_a_fee).toFixed(2)}</TableCell>
-                            <TableCell>₦{parseFloat(item.band_b_fee).toFixed(2)}</TableCell>
+                            <TableCell>{formatMoney(item.band_a_fee)}</TableCell>
+                            <TableCell>{formatMoney(item.band_b_fee)}</TableCell>
                             <TableCell>
                                 <Badge variant={item.active ? 'success' : 'neutral'}>
                                     {item.active ? 'Active' : 'Inactive'}
@@ -653,7 +654,7 @@ export default function ManageTaskTypes({ permissions }: { permissions: string[]
 
                     <div className="grid grid-cols-2 gap-4">
                         <Input
-                            label="Band A Fee (₦)"
+                            label="Band A Fee (NGN)"
                             type="number"
                             value={formData.band_a_fee}
                             onChange={(e) => setFormData({ ...formData, band_a_fee: e.target.value })}
@@ -663,7 +664,7 @@ export default function ManageTaskTypes({ permissions }: { permissions: string[]
                             step="0.01"
                         />
                         <Input
-                            label="Band B Fee (₦)"
+                            label="Band B Fee (NGN)"
                             type="number"
                             value={formData.band_b_fee}
                             onChange={(e) => setFormData({ ...formData, band_b_fee: e.target.value })}

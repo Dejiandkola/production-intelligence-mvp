@@ -10,6 +10,7 @@ import { db } from '@/services/db';
 import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
 import { Badge, Table, TableCell, TableRow } from '@/components/UI/Table';
+import { formatMoney } from '@/lib/formatters';
 
 const TAILOR_PAGE_SIZE = 25;
 const SEARCH_DEBOUNCE_MS = 350;
@@ -584,7 +585,7 @@ export default function PendingVerification() {
                                         <span>Cutting: {cuttingCount}</span>
                                     </div>
                                     <span className="hidden text-sm font-medium text-maison-primary lg:inline">
-                                        NGN {totalPayable.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        {formatMoney(totalPayable)}
                                     </span>
                                     <Badge variant={decidedCount === group.tasks.length && group.tasks.length > 0 ? 'success' : 'neutral'}>
                                         {decidedCount} / {group.tasks.length} Decided
@@ -608,7 +609,7 @@ export default function PendingVerification() {
                                                 </TableCell>
                                                 <TableCell>{task.tailor_name || 'Unassigned'}</TableCell>
                                                 <TableCell className="font-medium">
-                                                    NGN {parseFloat(task.pay_amount || 0).toFixed(2)}
+                                                    {formatMoney(task.pay_amount)}
                                                 </TableCell>
                                                 <TableCell>{renderStatusCell(task)}</TableCell>
                                             </TableRow>

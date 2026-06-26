@@ -10,6 +10,7 @@ import { db } from '@/services/db';
 import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
 import { Badge } from '@/components/UI/Table';
+import { formatMoney, formatNumber } from '@/lib/formatters';
 
 function toInputDate(date) {
     const year = date.getFullYear();
@@ -33,9 +34,8 @@ function getDeltaClass(change) {
 
 function formatValueDelta(value) {
     if (value === null || value === undefined) return 'NEW';
-    const formatted = Math.abs(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    if (value === 0) return `NGN 0.00`;
-    return `${value > 0 ? '+' : '-'}NGN ${formatted}`;
+    if (value === 0) return formatMoney(0);
+    return (value > 0 ? '+' : '-') + formatMoney(Math.abs(value));
 }
 
 export default function Dashboard() {
@@ -323,7 +323,7 @@ export default function Dashboard() {
                     </div>
                     <p className="text-sm font-medium text-gray-500">Backlog</p>
                     <div className="mt-1 flex items-end gap-3">
-                        <h3 className="text-3xl font-serif text-maison-primary">{stats.productionCount}</h3>
+                        <h3 className="text-3xl font-serif text-maison-primary">{formatNumber(stats.productionCount)}</h3>
                     </div>
                     <p className="mt-2 text-xs text-gray-400">Currently active</p>
                 </Card>
@@ -336,7 +336,7 @@ export default function Dashboard() {
                     </div>
                     <p className="text-sm font-medium text-gray-500">Archived</p>
                     <div className="mt-1 flex items-end gap-3">
-                        <h3 className="text-3xl font-serif text-maison-primary">{stats.archivedCount}</h3>
+                        <h3 className="text-3xl font-serif text-maison-primary">{formatNumber(stats.archivedCount)}</h3>
                     </div>
                     <p className="mt-2 text-xs text-gray-400">No longer in backlog</p>
                 </Card>
@@ -349,7 +349,7 @@ export default function Dashboard() {
                     </div>
                     <p className="text-sm font-medium text-gray-500">Produced</p>
                     <div className="mt-1 flex items-end gap-3">
-                        <h3 className="text-3xl font-serif text-maison-primary">{stats.completedCount}</h3>
+                        <h3 className="text-3xl font-serif text-maison-primary">{formatNumber(stats.completedCount)}</h3>
                     </div>
                     <p className="mt-2 text-xs text-gray-400">Out of production</p>
                 </Card>
@@ -362,7 +362,7 @@ export default function Dashboard() {
                     </div>
                     <p className="text-sm font-medium text-gray-500">Tailor Pay</p>
                     <div className="mt-1 flex items-end gap-3">
-                        <h3 className="text-3xl font-serif text-maison-primary">NGN {stats.totalRevenue.toLocaleString()}</h3>
+                        <h3 className="text-3xl font-serif text-maison-primary">{formatMoney(stats.totalRevenue)}</h3>
                     </div>
                     <p className={`mt-2 text-xs ${getDeltaClass(stats.totalRevenueChange)}`}>
                         {formatValueDelta(stats.totalRevenueChange)} vs previous period
@@ -416,9 +416,9 @@ export default function Dashboard() {
                                 {sortedTopProducts.map((product) => (
                                     <tr key={product.name} className="hover:bg-gray-50/60">
                                         <td className="px-4 py-3 font-medium text-gray-800">{product.name}</td>
-                                        <td className="px-4 py-3 text-right font-semibold text-maison-primary">{product.total}</td>
-                                        <td className="px-4 py-3 text-right text-emerald-600">{product.produced}</td>
-                                        <td className="px-4 py-3 text-right text-gray-600">{product.backlog}</td>
+                                        <td className="px-4 py-3 text-right font-semibold text-maison-primary">{formatNumber(product.total)}</td>
+                                        <td className="px-4 py-3 text-right text-emerald-600">{formatNumber(product.produced)}</td>
+                                        <td className="px-4 py-3 text-right text-gray-600">{formatNumber(product.backlog)}</td>
                                         <td className={`px-4 py-3 text-right font-medium ${getDeltaClass(product.delta)}`}>
                                             {formatDelta(product.delta)}
                                         </td>
@@ -453,10 +453,10 @@ export default function Dashboard() {
                             <div key={category.name} className="flex items-center justify-between rounded-lg bg-gray-50 p-3">
                                 <div>
                                     <div className="text-sm text-gray-700">{category.name}</div>
-                                    <div className="text-xs text-gray-500">{category.count} approved tasks</div>
+                                    <div className="text-xs text-gray-500">{formatNumber(category.count)} approved tasks</div>
                                 </div>
                                 <span className="font-medium text-maison-primary">
-                                    NGN {Number(category.spend || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    {formatMoney(category.spend)}
                                 </span>
                             </div>
                         ))}
@@ -521,9 +521,9 @@ export default function Dashboard() {
                                 <tr key={`${payrollRow.tailor_id}-${index}`} className="hover:bg-gray-50/50">
                                     <td className="px-4 py-3 font-medium text-gray-900">{payrollRow.tailor_name}</td>
                                     <td className="px-4 py-3 text-gray-500">{payrollRow.department}</td>
-                                    <td className="px-4 py-3 text-center">{payrollRow.task_count}</td>
+                                    <td className="px-4 py-3 text-center">{formatNumber(payrollRow.task_count)}</td>
                                     <td className="px-4 py-3 text-right font-bold text-maison-primary">
-                                        NGN {Number(payrollRow.weekly_total_pay || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        {formatMoney(payrollRow.weekly_total_pay)}
                                     </td>
                                 </tr>
                             ))}

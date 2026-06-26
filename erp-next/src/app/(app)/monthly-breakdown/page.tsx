@@ -10,6 +10,7 @@ import { db } from '@/services/db';
 import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
 import { Badge } from '@/components/UI/Table';
+import { formatMoney } from '@/lib/formatters';
 
 function getMonthKey(date) {
     const year = date.getFullYear();
@@ -335,11 +336,11 @@ export default function MonthlyBreakdownPage() {
                                     <td className="px-4 py-3 font-medium text-gray-900">{row.name}</td>
                                     {monthlyTailorPay.months.map((monthKey) => (
                                         <td key={`${row.name}-${monthKey}`} className="px-4 py-3 text-right text-gray-600">
-                                            NGN {Number(row[monthKey] || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            {formatMoney(row[monthKey])}
                                         </td>
                                     ))}
                                     <td className="px-4 py-3 text-right font-semibold text-maison-primary">
-                                        NGN {Number(row.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        {formatMoney(row.total)}
                                     </td>
                                 </tr>
                             ))}
@@ -390,11 +391,11 @@ export default function MonthlyBreakdownPage() {
                                     <td className="px-4 py-3 font-medium text-gray-900">{row.name}</td>
                                     {monthlyCategoryBreakdown.months.map((monthKey) => (
                                         <td key={`${row.name}-${monthKey}`} className="px-4 py-3 text-right text-gray-600">
-                                            NGN {Number(row[monthKey] || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            {formatMoney(row[monthKey])}
                                         </td>
                                     ))}
                                     <td className="px-4 py-3 text-right font-semibold text-maison-primary">
-                                        NGN {Number(row.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        {formatMoney(row.total)}
                                     </td>
                                 </tr>
                             ))}
@@ -445,11 +446,11 @@ export default function MonthlyBreakdownPage() {
                                     <td className="px-4 py-3 font-medium text-gray-900">{row.name}</td>
                                     {monthlyProductTypePayout.months.map((monthKey) => (
                                         <td key={`${row.name}-${monthKey}`} className="px-4 py-3 text-right text-gray-600">
-                                            NGN {Number(row[monthKey] || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            {formatMoney(row[monthKey])}
                                         </td>
                                     ))}
                                     <td className="px-4 py-3 text-right font-semibold text-maison-primary">
-                                        NGN {Number(row.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        {formatMoney(row.total)}
                                     </td>
                                 </tr>
                             ))}

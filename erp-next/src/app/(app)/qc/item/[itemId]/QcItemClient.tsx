@@ -9,8 +9,9 @@ import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
 import { Table, TableRow, TableCell, Badge } from '@/components/UI/Table';
 import { ArrowLeft, Plus, Trash2, Edit2 } from 'lucide-react';
+import { formatMoney } from '@/lib/formatters';
 
-export default function ManageItemTasks({ itemId: propItemId, onClose, canManageQc, rateCard = [], tailors = [] }: { itemId?: string, onClose?: () => void, canManageQc?: boolean, rateCard?: Record<string, unknown>[], tailors?: Record<string, unknown>[] }) {
+export default function ManageItemTasks({ itemId: propItemId, onClose, canManageQc, rateCard = [], tailors = [], specialPayRules = [] }: { itemId?: string, onClose?: () => void, canManageQc?: boolean, rateCard?: Record<string, unknown>[], tailors?: Record<string, unknown>[], specialPayRules?: Record<string, unknown>[] }) {
     const params = useParams();
     const itemId = propItemId || params.itemId;
     const router = useRouter();
@@ -128,13 +129,35 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
 
     const tailorBand = selectedTailor ? (selectedTailor.band || 'A') : 'A';
 
-    let calculatedPay = '0.00';
-    if (selectedRates.length > 0 && selectedTailor) {
-        const totalPay = selectedRates.reduce((sum, rate) => {
-            return sum + (tailorBand === 'B' ? Number(rate.band_b_fee || 0) : Number(rate.band_a_fee || 0));
-        }, 0);
-        calculatedPay = totalPay.toFixed(2);
-    }
+    const payBreakdown = selectedRates.map(rate => {
+        const baseFee = tailorBand === 'B' ? Number(rate.band_b_fee || 0) : Number(rate.band_a_fee || 0);
+        const specialPay = specialPayRules.find(rule =>
+            rule.tailor_id === activeTailorId &&
+            rule.task_type_id === rate.task_type_id &&
+            rule.special_fee !== null &&
+            rule.special_fee !== undefined
+        );
+        const specialFee = specialPay ? Number(specialPay.special_fee || 0) : null;
+
+        return {
+            taskTypeId: rate.task_type_id,
+            taskName: rate.name,
+            baseFee,
+            specialFee,
+            finalFee: specialFee !== null ? specialFee : baseFee,
+        };
+    });
+
+    const basePayTotal = selectedTailor
+        ? payBreakdown.reduce((sum, row) => sum + row.baseFee, 0)
+        : 0;
+    const finalPayTotal = selectedTailor
+        ? payBreakdown.reduce((sum, row) => sum + row.finalFee, 0)
+        : 0;
+    const specialPayRows = payBreakdown.filter(row => row.specialFee !== null);
+    const hasSpecialFees = selectedTailor && specialPayRows.length > 0;
+    const basePay = formatMoney(basePayTotal);
+    const calculatedPay = formatMoney(finalPayTotal);
 
 
     const handleCreateTask = async (e) => {
@@ -508,21 +531,35 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                                 </div>
                             </div>
 
-                            {/* Summary Box */}
-                            <div className="bg-white p-4 rounded-lg border border-gray-100 mt-4 shadow-sm">
-                                <div className="flex justify-between text-sm mb-1">
-                                    <span className="text-gray-500">Pay Band:</span>
-                                    <span className="font-medium">
-                                        Band {tailorBand}
-                                    </span>
-                                </div>
-                                <div className="flex justify-between text-sm font-bold text-maison-primary pt-2 border-t border-gray-100 mt-2">
-                                    <span>Total Pay:</span>
-                                    <span>₦{calculatedPay}</span>
-                                </div>
+                        {/* Summary Box */}
+                        <div className="bg-white p-4 rounded-lg border border-gray-100 mt-4 shadow-sm">
+                            <div className="flex justify-between text-sm mb-1">
+                                <span className="text-gray-500">Pay Band:</span>
+                                <span className="font-medium">
+                                    Band {tailorBand}
+                                </span>
                             </div>
+                            <div className="flex justify-between text-sm mb-1">
+                                <span className="text-gray-500">Base Rate:</span>
+                                <span className="font-medium">{basePay}</span>
+                            </div>
+                            {hasSpecialFees && (
+                                <div className="my-2 space-y-1 rounded-md bg-maison-accent/10 px-3 py-2 text-xs text-maison-primary">
+                                    {specialPayRows.map(row => (
+                                        <div key={row.taskTypeId} className="flex justify-between gap-3">
+                                            <span>{row.taskName} special fee</span>
+                                            <span className="font-semibold">{formatMoney(row.specialFee)}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                            <div className="flex justify-between text-sm font-bold text-maison-primary pt-2 border-t border-gray-100 mt-2">
+                                <span>Final Pay:</span>
+                                <span>{calculatedPay}</span>
+                            </div>
+                        </div>
 
-                            <div className="pt-2 flex justify-end gap-3">
+                        <div className="pt-2 flex justify-end gap-3">
                                 <Button type="button" variant="ghost" onClick={() => {
                                     setShowAssignForm(false);
                                     setNewCategorySearch('');
@@ -659,9 +696,23 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                                     Band {tailorBand}
                                 </span>
                             </div>
+                            <div className="flex justify-between text-sm mb-1">
+                                <span className="text-gray-500">Base Rate:</span>
+                                <span className="font-medium">{basePay}</span>
+                            </div>
+                            {hasSpecialFees && (
+                                <div className="my-2 space-y-1 rounded-md bg-maison-accent/10 px-3 py-2 text-xs text-maison-primary">
+                                    {specialPayRows.map(row => (
+                                        <div key={row.taskTypeId} className="flex justify-between gap-3">
+                                            <span>{row.taskName} special fee</span>
+                                            <span className="font-semibold">{formatMoney(row.specialFee)}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                             <div className="flex justify-between text-sm font-bold text-maison-primary pt-2 border-t border-gray-100 mt-2">
-                                <span>Total Pay:</span>
-                                <span>₦{calculatedPay}</span>
+                                <span>Final Pay:</span>
+                                <span>{calculatedPay}</span>
                             </div>
                         </div>
 
@@ -685,7 +736,7 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                             <TableCell>{task.category_name}</TableCell>
                             <TableCell className="font-medium">{task.task_type_name}</TableCell>
                             <TableCell>{task.tailor_name}</TableCell>
-                            <TableCell>₦{parseFloat(task.pay_amount).toFixed(2)}</TableCell>
+                            <TableCell>{formatMoney(task.pay_amount)}</TableCell>
                             <TableCell>
                                 <Badge variant={task.status === 'Approved' || task.status === 'PAID' ? 'success' : task.status === 'Rejected' ? 'danger' : 'warning'}>
                                     {task.status}

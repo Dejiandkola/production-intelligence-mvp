@@ -38,6 +38,7 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
 
     const [rateCard, setRateCard] = useState([]);
     const [tailors, setTailors] = useState([]);
+    const [specialPayRules, setSpecialPayRules] = useState([]);
     const [productTypes, setProductTypes] = useState([]);
     const [categoryOptions, setCategoryOptions] = useState([]);
 
@@ -74,10 +75,11 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
 
         try {
             const assignmentFilter = filter === 'all' ? '' : filter;
-            const [result, rc, t, productTypesData, categoriesData] = await Promise.all([
+            const [result, rc, t, specialPayData, productTypesData, categoriesData] = await Promise.all([
                 db.getTicketPaginatedItems(debouncedFilters, nextPage, QC_PAGE_SIZE, { excludeCancelled: true }),
                 reset ? db.getRates() : Promise.resolve(rateCard),
                 reset ? db.getTailors() : Promise.resolve(tailors),
+                reset ? db.getTailorSpecialPay() : Promise.resolve(specialPayRules),
                 reset ? db.getProductTypes() : Promise.resolve(productTypes),
                 reset ? db.getCategories() : Promise.resolve(categoryOptions.map(name => ({ name })))
             ]);
@@ -99,6 +101,7 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
             if (reset) {
                 setRateCard(rc);
                 setTailors(t);
+                setSpecialPayRules(specialPayData);
                 setProductTypes(productTypesData);
                 setCategoryOptions(categoriesData.map(category => category.name).filter(Boolean).sort());
             }
@@ -478,6 +481,7 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
                         canManageQc={canManageQc}
                         rateCard={rateCard}
                         tailors={tailors}
+                        specialPayRules={specialPayRules}
                     />
                 )}
             </Modal>

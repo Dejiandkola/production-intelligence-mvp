@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
-import { LayoutDashboard, ShoppingBag, Box, Users, PieChart, Shirt, CheckCircle2, X, Headset, History } from 'lucide-react';
+import { LayoutDashboard, ShoppingBag, Box, Users, PieChart, Shirt, CheckCircle2, X, Headset, History, Settings } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
@@ -22,6 +22,7 @@ const navigation = [
     // Admin / Master Data
     { name: 'Tailors', href: '/tailors', icon: Users },
     { name: 'Rates', href: '/rates', icon: PieChart },
+    { name: 'Settings', href: '/settings', icon: Settings },
 ];
 
 export function Sidebar({ isOpen, onClose }) {

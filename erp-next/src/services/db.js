@@ -7,6 +7,14 @@ let contextCacheTime = 0
 const CONTEXT_TTL_MS = 60 * 1000
 const QUERY_PAGE_SIZE = 1000
 
+function isMissingTailorSpecialPaySchemaError(error) {
+    const message = String(error?.message || '')
+
+    return error?.code === 'PGRST202'
+        || error?.code === 'PGRST205'
+        || (message.includes('tailor_special_pay') && message.includes('schema cache'))
+        || (message.includes('calculate_assignment_pay') && message.includes('schema cache'))
+}
 export class NotAuthenticatedError extends Error {
     constructor(message = "User not authenticated") {
         super(message)
@@ -187,6 +195,157 @@ function mapItemRow(item) {
     }
 }
 
+
+const CUSTOM_FIELD_TYPES = ['short_text', 'long_text', 'number', 'date', 'dropdown', 'checkbox']
+
+function isMissingCustomFieldSchemaError(error) {
+    const message = String(error?.message || '')
+
+    return error?.code === 'PGRST202'
+        || error?.code === 'PGRST205'
+        || (message.includes('custom_fields') && message.includes('schema cache'))
+        || (message.includes('custom_field_values') && message.includes('schema cache'))
+}
+function cleanOptionInputs(options = []) {
+    return options
+        .map((option, index) => ({
+            id: option.id || null,
+            label: String(option.label || '').trim(),
+            active: option.active !== false,
+            display_order: index
+        }))
+        .filter(option => option.label)
+}
+
+function mapCustomField(row, valueCounts = {}) {
+    const options = (row.custom_field_options || [])
+        .map(option => ({ ...option }))
+        .sort((a, b) => (a.display_order || 0) - (b.display_order || 0))
+
+    return {
+        ...row,
+        options,
+        value_count: valueCounts[row.id] || 0
+    }
+}
+
+async function fetchCustomFields(ctx, { module = 'items', activeOnly = false, allowMissingSchema = false } = {}) {
+    let query = supabase
+        .from('custom_fields')
+        .select(`
+            *,
+            custom_field_options(*)
+        `)
+        .eq('organization_id', ctx.organizationId)
+        .eq('module', module)
+        .order('display_order', { ascending: true })
+        .order('created_at', { ascending: true })
+
+    if (activeOnly) {
+        query = query.eq('active', true)
+    }
+
+    const { data, error } = await query
+
+    if (error) {
+        if (allowMissingSchema && isMissingCustomFieldSchemaError(error)) {
+            return []
+        }
+
+        console.error(error)
+        throw new Error(error.message)
+    }
+
+    const { data: valueRows, error: valueError } = await supabase
+        .from('custom_field_values')
+        .select('field_id')
+        .eq('organization_id', ctx.organizationId)
+
+    if (valueError) {
+        if (allowMissingSchema && isMissingCustomFieldSchemaError(valueError)) {
+            return []
+        }
+
+        console.error(valueError)
+        throw new Error(valueError.message)
+    }
+
+    const valueCounts = (valueRows || []).reduce((acc, row) => {
+        acc[row.field_id] = (acc[row.field_id] || 0) + 1
+        return acc
+    }, {})
+
+    return (data || []).map(row => {
+        const field = mapCustomField(row, valueCounts)
+        if (activeOnly) {
+            field.options = field.options.filter(option => option.active)
+        }
+        return field
+    })
+}
+
+function hasCustomFieldValue(field, value) {
+    if (field.field_type === 'checkbox') return value === true || value === false
+    return value !== undefined && value !== null && String(value).trim() !== ''
+}
+
+function buildCustomFieldValueRows(ctx, itemId, fields, customValues = {}) {
+    const rows = []
+
+    for (const field of fields) {
+        const value = customValues[field.id]
+        const hasValue = hasCustomFieldValue(field, value)
+
+        if (field.required && !hasValue) {
+            throw new Error(`${field.label} is required.`)
+        }
+
+        if (!hasValue) continue
+
+        const row = {
+            organization_id: ctx.organizationId,
+            item_id: itemId,
+            field_id: field.id,
+            text_value: null,
+            number_value: null,
+            boolean_value: null,
+            date_value: null,
+            option_value: null
+        }
+
+        if (field.field_type === 'short_text' || field.field_type === 'long_text') {
+            row.text_value = String(value).trim()
+        } else if (field.field_type === 'number') {
+            const numericValue = Number(String(value).replace(/,/g, '').trim())
+            if (!Number.isFinite(numericValue)) {
+                throw new Error(`${field.label} must be a valid number.`)
+            }
+            row.number_value = numericValue
+        } else if (field.field_type === 'date') {
+            row.date_value = String(value)
+        } else if (field.field_type === 'dropdown') {
+            const allowedOption = (field.options || []).find(option => option.id === value && option.active)
+            if (!allowedOption) {
+                throw new Error(`${field.label} has an invalid selected option.`)
+            }
+            row.option_value = value
+        } else if (field.field_type === 'checkbox') {
+            row.boolean_value = Boolean(value)
+        }
+
+        rows.push(row)
+    }
+
+    return rows
+}
+
+function getCustomFieldValueFromRow(row) {
+    if (row.option_value !== null && row.option_value !== undefined) return row.option_value
+    if (row.boolean_value !== null && row.boolean_value !== undefined) return row.boolean_value
+    if (row.number_value !== null && row.number_value !== undefined) return row.number_value
+    if (row.date_value !== null && row.date_value !== undefined) return row.date_value
+    return row.text_value || ''
+}
 export const db = {
 
     async getCurrentUser() {
@@ -334,23 +493,62 @@ export const db = {
         return data || []
     },
 
-    async getTailorSpecialPay(tailorId) {
+    async getTailorSpecialPay(tailorId = null) {
         const ctx = await getContext()
 
-        const { data, error } = await supabase
+        let query = supabase
             .from('tailor_special_pay')
-            .select('*')
+            .select(`
+                *,
+                task_types(name)
+            `)
             .eq('organization_id', ctx.organizationId)
-            .eq('tailor_id', tailorId)
+
+        if (tailorId) {
+            query = query.eq('tailor_id', tailorId)
+        }
+
+        const { data, error } = await query.order('created_at', { ascending: false })
 
         if (error) {
+            if (isMissingTailorSpecialPaySchemaError(error)) {
+                console.warn('Tailor special pay schema is not available yet. Apply migration 016_tailor_special_fee.sql.', error)
+                return []
+            }
+
             console.error(error)
             throw new Error(error.message)
         }
 
-        return data
+        return (data || []).map(rule => ({
+            ...rule,
+            task_type_name: rule.task_types?.name
+        }))
     },
 
+    async getAssignmentPayPreview({ item_id, category_type_id, task_type_id, tailor_id }) {
+        await getContext()
+
+        const { data, error } = await supabase.rpc('calculate_assignment_pay', {
+            p_item_id: item_id,
+            p_category_type_id: category_type_id,
+            p_task_type_id: task_type_id,
+            p_tailor_id: tailor_id
+        })
+
+        if (error) {
+            if (isMissingTailorSpecialPaySchemaError(error)) {
+                console.warn('Assignment pay preview RPC is not available yet. Apply migration 016_tailor_special_fee.sql.', error)
+                return null
+            }
+
+            console.error(error)
+            throw new Error(error.message)
+        }
+
+        const preview = Array.isArray(data) ? data[0] : data
+        return preview || null
+    },
     async getTicketByNumber(ticket_number) {
 
         const ctx = await getContext()
@@ -442,7 +640,7 @@ export const db = {
         return data
     },
 
-    async createItemsForTicketCS({ ticket_id, product_type_id, quantity = 1 }) {
+    async createItemsForTicketCS({ ticket_id, product_type_id, quantity = 1, custom_values = {} }) {
         const ctx = await getContext()
         requireAnyPermission(ctx, ['manage_customer_service', 'admin'])
 
@@ -450,6 +648,9 @@ export const db = {
         if (!ticket_id || !product_type_id || count < 1) {
             throw new Error('Ticket, product type, and quantity are required.')
         }
+
+        const customFields = await fetchCustomFields(ctx, { module: 'items', activeOnly: true, allowMissingSchema: true })
+        buildCustomFieldValueRows(ctx, '00000000-0000-0000-0000-000000000000', customFields, custom_values)
 
         const rows = Array.from({ length: count }).map(() => ({
             organization_id: ctx.organizationId,
@@ -468,9 +669,333 @@ export const db = {
             throw new Error(error.message)
         }
 
+        const itemIds = (data || []).map(item => item.id)
+        const valueRows = itemIds.flatMap(itemId => buildCustomFieldValueRows(ctx, itemId, customFields, custom_values))
+
+        if (valueRows.length > 0) {
+            const { error: valueError } = await supabase
+                .from('custom_field_values')
+                .insert(valueRows)
+
+            if (valueError) {
+                await supabase
+                    .from('items')
+                    .delete()
+                    .eq('organization_id', ctx.organizationId)
+                    .in('id', itemIds)
+
+                console.error(valueError)
+                throw new Error(valueError.message)
+            }
+        }
+
         return data
     },
 
+
+    // -------------------------
+    // CUSTOM ITEM FIELDS
+    // -------------------------
+
+    async getCustomFields(module = 'items') {
+        const ctx = await getContext()
+        return fetchCustomFields(ctx, { module })
+    },
+
+    async getActiveCustomFields(module = 'items') {
+        const ctx = await getContext()
+        return fetchCustomFields(ctx, { module, activeOnly: true, allowMissingSchema: true })
+    },
+
+    async saveCustomField(payload) {
+        const ctx = await getContext()
+        requirePermission(ctx, 'admin')
+
+        const label = String(payload.label || '').trim()
+        const fieldType = payload.field_type
+
+        if (!label) {
+            throw new Error('Field label is required.')
+        }
+
+        if (!CUSTOM_FIELD_TYPES.includes(fieldType)) {
+            throw new Error('Select a valid field type.')
+        }
+
+        if (fieldType === 'dropdown' && cleanOptionInputs(payload.options).length === 0) {
+            throw new Error('Dropdown fields need at least one option.')
+        }
+
+        let field
+
+        if (payload.id) {
+            const { data: existing, error: existingError } = await supabase
+                .from('custom_fields')
+                .select('*')
+                .eq('id', payload.id)
+                .eq('organization_id', ctx.organizationId)
+                .single()
+
+            if (existingError) {
+                console.error(existingError)
+                throw new Error(existingError.message)
+            }
+
+            if (existing.field_type !== fieldType) {
+                const { count, error: countError } = await supabase
+                    .from('custom_field_values')
+                    .select('*', { count: 'exact', head: true })
+                    .eq('organization_id', ctx.organizationId)
+                    .eq('field_id', payload.id)
+
+                if (countError) {
+                    console.error(countError)
+                    throw new Error(countError.message)
+                }
+
+                if ((count || 0) > 0) {
+                    throw new Error('Field type cannot be changed after values have been saved.')
+                }
+            }
+
+            const { data, error } = await supabase
+                .from('custom_fields')
+                .update({
+                    label,
+                    field_type: fieldType,
+                    required: Boolean(payload.required),
+                    active: payload.active !== false
+                })
+                .eq('id', payload.id)
+                .eq('organization_id', ctx.organizationId)
+                .select()
+                .single()
+
+            if (error) {
+                console.error(error)
+                throw new Error(error.message)
+            }
+
+            field = data
+        } else {
+            const existingFields = await fetchCustomFields(ctx, { module: 'items' })
+            const nextOrder = existingFields.length
+
+            const { data, error } = await supabase
+                .from('custom_fields')
+                .insert({
+                    organization_id: ctx.organizationId,
+                    module: 'items',
+                    label,
+                    field_type: fieldType,
+                    required: Boolean(payload.required),
+                    active: payload.active !== false,
+                    display_order: nextOrder
+                })
+                .select()
+                .single()
+
+            if (error) {
+                console.error(error)
+                throw new Error(error.message)
+            }
+
+            field = data
+        }
+
+        if (fieldType === 'dropdown') {
+            const optionInputs = cleanOptionInputs(payload.options)
+            const { data: existingOptions, error: optionsError } = await supabase
+                .from('custom_field_options')
+                .select('*')
+                .eq('organization_id', ctx.organizationId)
+                .eq('field_id', field.id)
+
+            if (optionsError) {
+                console.error(optionsError)
+                throw new Error(optionsError.message)
+            }
+
+            const submittedIds = optionInputs.map(option => option.id).filter(Boolean)
+            const existingIds = (existingOptions || []).map(option => option.id)
+            const removedIds = existingIds.filter(id => !submittedIds.includes(id))
+
+            for (const option of optionInputs) {
+                if (option.id) {
+                    const { error } = await supabase
+                        .from('custom_field_options')
+                        .update({
+                            label: option.label,
+                            active: option.active,
+                            display_order: option.display_order
+                        })
+                        .eq('id', option.id)
+                        .eq('organization_id', ctx.organizationId)
+                        .eq('field_id', field.id)
+
+                    if (error) {
+                        console.error(error)
+                        throw new Error(error.message)
+                    }
+                } else {
+                    const { error } = await supabase
+                        .from('custom_field_options')
+                        .insert({
+                            organization_id: ctx.organizationId,
+                            field_id: field.id,
+                            label: option.label,
+                            active: true,
+                            display_order: option.display_order
+                        })
+
+                    if (error) {
+                        console.error(error)
+                        throw new Error(error.message)
+                    }
+                }
+            }
+
+            if (removedIds.length > 0) {
+                const { error } = await supabase
+                    .from('custom_field_options')
+                    .update({ active: false })
+                    .eq('organization_id', ctx.organizationId)
+                    .in('id', removedIds)
+
+                if (error) {
+                    console.error(error)
+                    throw new Error(error.message)
+                }
+            }
+        } else {
+            const { error } = await supabase
+                .from('custom_field_options')
+                .delete()
+                .eq('organization_id', ctx.organizationId)
+                .eq('field_id', field.id)
+
+            if (error) {
+                console.error(error)
+                throw new Error(error.message)
+            }
+        }
+
+        const fields = await fetchCustomFields(ctx, { module: 'items' })
+        return fields.find(row => row.id === field.id) || field
+    },
+
+    async setCustomFieldActive(id, active) {
+        const ctx = await getContext()
+        requirePermission(ctx, 'admin')
+
+        const { error } = await supabase
+            .from('custom_fields')
+            .update({ active: Boolean(active) })
+            .eq('id', id)
+            .eq('organization_id', ctx.organizationId)
+
+        if (error) {
+            console.error(error)
+            throw new Error(error.message)
+        }
+    },
+
+    async deleteCustomField(id, confirmation) {
+        const ctx = await getContext()
+        requirePermission(ctx, 'admin')
+
+        if (confirmation !== 'DELETE') {
+            throw new Error('Type DELETE to permanently delete this field and its saved values.')
+        }
+
+        const { error } = await supabase
+            .from('custom_fields')
+            .delete()
+            .eq('id', id)
+            .eq('organization_id', ctx.organizationId)
+
+        if (error) {
+            console.error(error)
+            throw new Error(error.message)
+        }
+    },
+
+    async getItemCustomFieldValues(itemId) {
+        const ctx = await getContext()
+
+        const { data, error } = await supabase
+            .from('custom_field_values')
+            .select('*')
+            .eq('organization_id', ctx.organizationId)
+            .eq('item_id', itemId)
+
+        if (error) {
+            console.error(error)
+            throw new Error(error.message)
+        }
+
+        return (data || []).reduce((acc, row) => {
+            acc[row.field_id] = getCustomFieldValueFromRow(row)
+            return acc
+        }, {})
+    },
+
+    async saveItemCustomFieldValues(itemId, customValues = {}) {
+        const ctx = await getContext()
+        requireAnyPermission(ctx, ['manage_customer_service', 'manage_production', 'admin'])
+
+        const { data: item, error: itemError } = await supabase
+            .from('items')
+            .select('id, status')
+            .eq('id', itemId)
+            .eq('organization_id', ctx.organizationId)
+            .single()
+
+        if (itemError) {
+            console.error(itemError)
+            throw new Error(itemError.message)
+        }
+
+        const isCustomerServiceOnly = ctx.permissions.includes('manage_customer_service')
+            && !ctx.permissions.includes('manage_production')
+            && !ctx.permissions.includes('admin')
+
+        if (isCustomerServiceOnly && item.status !== 'NEW') {
+            throw new Error('Customer Service can only edit custom fields while the item is New.')
+        }
+
+        const fields = await fetchCustomFields(ctx, { module: 'items', activeOnly: true })
+        const fieldIds = fields.map(field => field.id)
+
+        if (fieldIds.length === 0) return true
+
+        const rows = buildCustomFieldValueRows(ctx, itemId, fields, customValues)
+
+        const { error: deleteError } = await supabase
+            .from('custom_field_values')
+            .delete()
+            .eq('organization_id', ctx.organizationId)
+            .eq('item_id', itemId)
+            .in('field_id', fieldIds)
+
+        if (deleteError) {
+            console.error(deleteError)
+            throw new Error(deleteError.message)
+        }
+
+        if (rows.length === 0) return true
+
+        const { error } = await supabase
+            .from('custom_field_values')
+            .upsert(rows, { onConflict: 'organization_id,item_id,field_id' })
+
+        if (error) {
+            console.error(error)
+            throw new Error(error.message)
+        }
+
+        return true
+    },
     // -------------------------
     // MASTER DATA WRITES
     // -------------------------
@@ -821,10 +1346,15 @@ export const db = {
         return true
     },
 
-    async saveTailorSpecialPay(tailor_id, task_type_id, uplift_pct) {
+    async saveTailorSpecialPay(tailor_id, task_type_id, special_fee) {
 
         const ctx = await getContext()
         requirePermission(ctx, 'manage_tailors')
+
+        const amount = Number(special_fee)
+        if (!tailor_id || !task_type_id || !Number.isFinite(amount) || amount <= 0) {
+            throw new Error('Tailor, task type, and a positive special fee are required.')
+        }
 
         const { data, error } = await supabase
             .from('tailor_special_pay')
@@ -832,19 +1362,29 @@ export const db = {
                 organization_id: ctx.organizationId,
                 tailor_id,
                 task_type_id,
-                uplift_pct
+                special_fee: amount
             }, {
                 onConflict: 'organization_id,tailor_id,task_type_id'
             })
-            .select()
+            .select(`
+                *,
+                task_types(name)
+            `)
             .single()
 
         if (error) {
+            if (isMissingTailorSpecialPaySchemaError(error)) {
+                throw new Error('Tailor special pay is not ready yet. Apply migration 016_tailor_special_fee.sql in Supabase, then refresh the app.')
+            }
+
             console.error(error)
             throw new Error(error.message)
         }
 
-        return data
+        return {
+            ...data,
+            task_type_name: data.task_types?.name
+        }
     },
 
     async removeTailorSpecialPay(id) {
@@ -859,6 +1399,10 @@ export const db = {
             .eq('organization_id', ctx.organizationId)
 
         if (error) {
+            if (isMissingTailorSpecialPaySchemaError(error)) {
+                throw new Error('Tailor special pay is not ready yet. Apply migration 016_tailor_special_fee.sql in Supabase, then refresh the app.')
+            }
+
             console.error(error)
             throw new Error(error.message)
         }

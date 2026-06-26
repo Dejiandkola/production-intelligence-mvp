@@ -10,6 +10,7 @@ import { Table, TableRow, TableCell, Badge } from '@/components/UI/Table';
 import { Modal } from '@/components/UI/Modal';
 import { Search, FilterX, Clock, CheckCircle2, ChevronDown, ChevronRight } from 'lucide-react';
 import { format } from 'date-fns';
+import { formatMoney } from '@/lib/formatters';
 
 const PRODUCTION_ASSIGNMENT_CATEGORIES = ['Cutting', 'Airstay Cutting', 'Embroidery'];
 const TICKET_PAGE_SIZE = 50;
@@ -31,6 +32,7 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
     const [rateCards, setRateCards] = useState([]);
     const [tailors, setTailors] = useState([]);
     const [productTypes, setProductTypes] = useState([]);
+    const [specialPayRules, setSpecialPayRules] = useState([]);
     const [loading, setLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
     const [page, setPage] = useState(1);
@@ -115,16 +117,18 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
     }, [loading, loadingMore, isSearchDebouncing, items.length, page, totalTickets, activeTab, filters.productType, filters.startDate, filters.endDate, debouncedSearch]);
 
     const loadPageData = async () => {
-        const [summaryData, ratesData, tailorsData, productTypesData] = await Promise.all([
+        const [summaryData, ratesData, tailorsData, productTypesData, specialPayData] = await Promise.all([
             db.getProductionItemSummary(),
             db.getRates(),
             db.getTailors(),
-            db.getProductTypes()
+            db.getProductTypes(),
+            db.getTailorSpecialPay()
         ]);
         setSummary(summaryData);
         setRateCards(ratesData);
         setTailors(tailorsData);
         setProductTypes(productTypesData);
+        setSpecialPayRules(specialPayData || []);
     };
 
     const getTabStatus = () => {
@@ -311,9 +315,19 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
         rate.category_type_id === assignmentForm.category_type_id &&
         rate.task_type_id === assignmentForm.task_type_id
     );
-    const assignmentPay = selectedAssignmentRate
-        ? Number(assignmentTailorBand === 'B' ? selectedAssignmentRate.band_b_fee || 0 : selectedAssignmentRate.band_a_fee || 0).toFixed(2)
-        : '0.00';
+    const selectedAssignmentSpecialPay = specialPayRules.find(rule =>
+        rule.tailor_id === assignmentForm.tailor_id &&
+        rule.task_type_id === assignmentForm.task_type_id &&
+        rule.special_fee !== null &&
+        rule.special_fee !== undefined
+    );
+    const baseAssignmentPay = selectedAssignmentRate
+        ? Number(assignmentTailorBand === 'B' ? selectedAssignmentRate.band_b_fee || 0 : selectedAssignmentRate.band_a_fee || 0)
+        : 0;
+    const finalAssignmentPay = selectedAssignmentSpecialPay
+        ? Number(selectedAssignmentSpecialPay.special_fee || 0)
+        : baseAssignmentPay;
+    const assignmentPay = formatMoney(finalAssignmentPay);
     const openAssignmentForm = (item, categoryName = '', mode = 'create') => {
         const categoryAssignment = getCategoryAssignment(item, categoryName);
         const categoryId = getCategoryId(item, categoryName) || categoryAssignment?.category_type_id || '';
@@ -988,9 +1002,19 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
                                 <span className="text-gray-500">Pay Band:</span>
                                 <span className="font-medium">Band {assignmentTailorBand}</span>
                             </div>
+                            <div className="mb-1 flex justify-between text-sm">
+                                <span className="text-gray-500">Base Rate:</span>
+                                <span className="font-medium">{formatMoney(baseAssignmentPay)}</span>
+                            </div>
+                            {selectedAssignmentSpecialPay && (
+                                <div className="mb-1 flex justify-between text-sm text-emerald-700">
+                                    <span>Special Fee:</span>
+                                    <span className="font-medium">{formatMoney(selectedAssignmentSpecialPay.special_fee)}</span>
+                                </div>
+                            )}
                             <div className="mt-2 flex justify-between border-t border-gray-100 pt-2 text-sm font-bold text-maison-primary">
-                                <span>Task Price:</span>
-                                <span>NGN {assignmentPay}</span>
+                                <span>Final Pay:</span>
+                                <span>{assignmentPay}</span>
                             </div>
                         </div>
                         <div className="flex justify-end gap-2">
