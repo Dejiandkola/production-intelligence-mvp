@@ -16,7 +16,9 @@ import { Edit2, Plus, Power, PowerOff, Trash2 } from 'lucide-react';
 const DEPARTMENTS = ['PANT', 'SHIRT', 'SUIT', 'KAFTAN', 'ACCESSORIES', 'DESIGN', 'CUTTER', 'OTHER'];
 export default function ManageTailors({ canManageTailors }: { canManageTailors: boolean }) {
     const [tailors, setTailors] = useState([]);
+    const [categories, setCategories] = useState([]);
     const [taskTypes, setTaskTypes] = useState([]);
+    const [rateCards, setRateCards] = useState([]);
     const [specialPayRules, setSpecialPayRules] = useState([]);
     const [loading, setLoading] = useState(true);
 
@@ -26,7 +28,8 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
     const [isSpecialPayModalOpen, setIsSpecialPayModalOpen] = useState(false);
     const [activeSpecialPayTailor, setActiveSpecialPayTailor] = useState(null);
     const [editingSpecialPayRule, setEditingSpecialPayRule] = useState(null);
-    const [specialPayForm, setSpecialPayForm] = useState({ task_type_id: '', special_fee: '' });
+    const [specialPayForm, setSpecialPayForm] = useState({ category_type_id: '', task_type_id: '', special_fee: '' });
+    const [specialPaySearch, setSpecialPaySearch] = useState({ category: '', task: '' });
 
     const [tailorForm, setTailorForm] = useState({
         name: '', department: 'OTHER', band: 'A', active: true
@@ -38,16 +41,47 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
 
     const loadData = async () => {
         setLoading(true);
-        const [tailorsData, taskTypesData, specialPayData] = await Promise.all([
+        const [tailorsData, categoriesData, taskTypesData, rateCardsData, specialPayData] = await Promise.all([
             db.getTailors(),
+            db.getCategories(),
             db.getTaskTypes(),
+            db.getRates(),
             db.getTailorSpecialPay()
         ]);
         setTailors(tailorsData);
+        setCategories(categoriesData || []);
         setTaskTypes(taskTypesData || []);
+        setRateCards(rateCardsData || []);
         setSpecialPayRules(specialPayData || []);
         setLoading(false);
     };
+
+    const getTaskCategoryId = (taskId) => {
+        const rate = rateCards.find(entry => entry.task_type_id === taskId);
+        return rate?.category_type_id || '';
+    };
+
+    const getTasksForCategory = (categoryId) => {
+        const taskIds = new Set(
+            rateCards
+                .filter(rate => rate.category_type_id === categoryId)
+                .map(rate => rate.task_type_id)
+                .filter(Boolean)
+        );
+
+        return taskTypes
+            .filter(task => taskIds.has(task.id))
+            .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    };
+
+    const getCategoryName = (categoryId) => {
+        return categories.find(category => category.id === categoryId)?.name || '';
+    };
+
+    const getCategoryNameForTask = (taskId) => {
+        return getCategoryName(getTaskCategoryId(taskId));
+    };
+
 
     const getTailorSpecialPayRules = (tailorId) => {
         return specialPayRules
@@ -57,7 +91,8 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
 
     const resetSpecialPayForm = () => {
         setEditingSpecialPayRule(null);
-        setSpecialPayForm({ task_type_id: taskTypes[0]?.id || '', special_fee: '' });
+        setSpecialPaySearch({ category: '', task: '' });
+        setSpecialPayForm({ category_type_id: '', task_type_id: '', special_fee: '' });
     };
 
     const handleOpenTailorModal = (tailor = null) => {
@@ -80,15 +115,40 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
         setActiveSpecialPayTailor(tailor);
         setIsSpecialPayModalOpen(true);
         setEditingSpecialPayRule(null);
-        setSpecialPayForm({ task_type_id: taskTypes[0]?.id || '', special_fee: '' });
+        setSpecialPaySearch({ category: '', task: '' });
+        setSpecialPayForm({ category_type_id: '', task_type_id: '', special_fee: '' });
     };
 
     const handleEditSpecialPayRule = (rule) => {
+        const categoryId = getTaskCategoryId(rule.task_type_id);
+        const task = taskTypes.find(item => item.id === rule.task_type_id);
         setEditingSpecialPayRule(rule);
+        setSpecialPaySearch({
+            category: getCategoryName(categoryId),
+            task: task?.name || rule.task_type_name || ''
+        });
         setSpecialPayForm({
+            category_type_id: categoryId,
             task_type_id: rule.task_type_id,
             special_fee: String(rule.special_fee ?? '')
         });
+    };
+
+    const handleSelectSpecialPayCategory = (category) => {
+        setSpecialPaySearch({ category: category.name || '', task: '' });
+        setSpecialPayForm(prev => ({
+            ...prev,
+            category_type_id: category.id,
+            task_type_id: ''
+        }));
+    };
+
+    const handleSelectSpecialPayTask = (task) => {
+        setSpecialPaySearch(prev => ({ ...prev, task: task.name || '' }));
+        setSpecialPayForm(prev => ({
+            ...prev,
+            task_type_id: task.id
+        }));
     };
 
     const handleCloseSpecialPayModal = () => {
@@ -180,6 +240,19 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
             }
         }
     };
+
+    const selectedSpecialPayTasks = getTasksForCategory(specialPayForm.category_type_id);
+    const searchableSpecialPayCategories = categories
+        .filter(category => getTasksForCategory(category.id).length > 0)
+        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    const categorySearch = specialPaySearch.category.trim().toLowerCase();
+    const taskSearch = specialPaySearch.task.trim().toLowerCase();
+    const filteredSpecialPayCategories = searchableSpecialPayCategories.filter(category =>
+        !categorySearch || (category.name || '').toLowerCase().includes(categorySearch)
+    );
+    const filteredSpecialPayTasks = selectedSpecialPayTasks.filter(task =>
+        !taskSearch || (task.name || '').toLowerCase().includes(taskSearch)
+    );
 
     return (
         <div className="space-y-6">
@@ -430,6 +503,7 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
                                     <div key={rule.id} className="flex items-center justify-between gap-3 rounded-md bg-white px-3 py-2 text-sm">
                                         <div>
                                             <div className="font-medium text-maison-primary">{rule.task_type_name || 'Task'}</div>
+                                            <div className="text-xs text-maison-secondary">{getCategoryNameForTask(rule.task_type_id) || 'No category'}</div>
                                             <div className="text-maison-secondary">{formatMoney(rule.special_fee)}</div>
                                         </div>
                                         <div className="flex gap-2">
@@ -459,20 +533,71 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
                     </div>
 
                     <form onSubmit={handleSaveSpecialPay} className="space-y-4 border-t border-gray-100 pt-4">
-                        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                            <div>
+                                <label className="mb-1.5 block text-sm font-medium text-maison-secondary">Category</label>
+                                <div className="space-y-2">
+                                    <input
+                                        type="text"
+                                        value={specialPaySearch.category}
+                                        onChange={(event) => {
+                                            setSpecialPaySearch({ category: event.target.value, task: '' });
+                                            setSpecialPayForm(prev => ({ ...prev, category_type_id: '', task_type_id: '' }));
+                                        }}
+                                        placeholder="Type category name..."
+                                        required
+                                        className="block w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-maison-primary/20"
+                                    />
+                                    <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white">
+                                        {filteredSpecialPayCategories.length > 0 ? filteredSpecialPayCategories.map(category => (
+                                            <button
+                                                key={category.id}
+                                                type="button"
+                                                onClick={() => handleSelectSpecialPayCategory(category)}
+                                                className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50 ${specialPayForm.category_type_id === category.id ? 'bg-maison-accent/10 font-medium text-maison-primary' : ''}`}
+                                            >
+                                                <span>{category.name}</span>
+                                                {specialPayForm.category_type_id === category.id && <span className="text-xs text-maison-secondary">Selected</span>}
+                                            </button>
+                                        )) : (
+                                            <div className="px-3 py-2 text-sm text-gray-500">No matching categories found.</div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
                             <div>
                                 <label className="mb-1.5 block text-sm font-medium text-maison-secondary">Task Type</label>
-                                <select
-                                    value={specialPayForm.task_type_id}
-                                    onChange={(event) => setSpecialPayForm(prev => ({ ...prev, task_type_id: event.target.value }))}
-                                    required
-                                    className="block w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-maison-primary/20"
-                                >
-                                    <option value="">Select task...</option>
-                                    {taskTypes.map(task => (
-                                        <option key={task.id} value={task.id}>{task.name}</option>
-                                    ))}
-                                </select>
+                                <div className="space-y-2">
+                                    <input
+                                        type="text"
+                                        value={specialPaySearch.task}
+                                        onChange={(event) => {
+                                            setSpecialPaySearch(prev => ({ ...prev, task: event.target.value }));
+                                            setSpecialPayForm(prev => ({ ...prev, task_type_id: '' }));
+                                        }}
+                                        placeholder={specialPayForm.category_type_id ? 'Type task name...' : 'Select category first'}
+                                        disabled={!specialPayForm.category_type_id}
+                                        required
+                                        className="block w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-maison-primary/20 disabled:bg-gray-50 disabled:text-gray-400"
+                                    />
+                                    <div className={`max-h-40 overflow-y-auto rounded-lg border border-gray-200 ${specialPayForm.category_type_id ? 'bg-white' : 'bg-gray-50'}`}>
+                                        {!specialPayForm.category_type_id ? (
+                                            <div className="px-3 py-2 text-sm text-gray-500">Select a category first.</div>
+                                        ) : filteredSpecialPayTasks.length > 0 ? filteredSpecialPayTasks.map(task => (
+                                            <button
+                                                key={task.id}
+                                                type="button"
+                                                onClick={() => handleSelectSpecialPayTask(task)}
+                                                className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50 ${specialPayForm.task_type_id === task.id ? 'bg-maison-accent/10 font-medium text-maison-primary' : ''}`}
+                                            >
+                                                <span>{task.name}</span>
+                                                {specialPayForm.task_type_id === task.id && <span className="text-xs text-maison-secondary">Selected</span>}
+                                            </button>
+                                        )) : (
+                                            <div className="px-3 py-2 text-sm text-gray-500">No matching tasks found.</div>
+                                        )}
+                                    </div>
+                                </div>
                             </div>
                             <div>
                                 <label className="mb-1.5 block text-sm font-medium text-maison-secondary">Special Fee</label>
@@ -494,7 +619,7 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
                                     Cancel Edit
                                 </Button>
                             )}
-                            <Button type="submit" disabled={!canManageTailors || taskTypes.length === 0}>
+                            <Button type="submit" disabled={!canManageTailors || !specialPayForm.task_type_id || selectedSpecialPayTasks.length === 0}>
                                 {editingSpecialPayRule ? 'Update Special Fee' : 'Add Special Fee'}
                             </Button>
                         </div>
