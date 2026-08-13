@@ -317,6 +317,7 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
     );
     const selectedAssignmentSpecialPay = specialPayRules.find(rule =>
         rule.tailor_id === assignmentForm.tailor_id &&
+        rule.category_type_id === assignmentForm.category_type_id &&
         rule.task_type_id === assignmentForm.task_type_id &&
         rule.special_fee !== null &&
         rule.special_fee !== undefined

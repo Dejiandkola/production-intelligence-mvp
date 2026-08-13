@@ -133,6 +133,7 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
         const baseFee = tailorBand === 'B' ? Number(rate.band_b_fee || 0) : Number(rate.band_a_fee || 0);
         const specialPay = specialPayRules.find(rule =>
             rule.tailor_id === activeTailorId &&
+            rule.category_type_id === rate.category_type_id &&
             rule.task_type_id === rate.task_type_id &&
             rule.special_fee !== null &&
             rule.special_fee !== undefined

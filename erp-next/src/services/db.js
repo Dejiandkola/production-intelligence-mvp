@@ -500,6 +500,7 @@ export const db = {
             .from('tailor_special_pay')
             .select(`
                 *,
+                category_types(name),
                 task_types(name)
             `)
             .eq('organization_id', ctx.organizationId)
@@ -512,7 +513,7 @@ export const db = {
 
         if (error) {
             if (isMissingTailorSpecialPaySchemaError(error)) {
-                console.warn('Tailor special pay schema is not available yet. Apply migration 016_tailor_special_fee.sql.', error)
+                console.warn('Tailor special pay schema is not available yet. Apply the latest tailor special pay migration.', error)
                 return []
             }
 
@@ -522,6 +523,7 @@ export const db = {
 
         return (data || []).map(rule => ({
             ...rule,
+            category_type_name: rule.category_types?.name,
             task_type_name: rule.task_types?.name
         }))
     },
@@ -1346,14 +1348,14 @@ export const db = {
         return true
     },
 
-    async saveTailorSpecialPay(tailor_id, task_type_id, special_fee) {
+    async saveTailorSpecialPay(tailor_id, category_type_id, task_type_id, special_fee) {
 
         const ctx = await getContext()
         requirePermission(ctx, 'manage_tailors')
 
         const amount = Number(special_fee)
-        if (!tailor_id || !task_type_id || !Number.isFinite(amount) || amount <= 0) {
-            throw new Error('Tailor, task type, and a positive special fee are required.')
+        if (!tailor_id || !category_type_id || !task_type_id || !Number.isFinite(amount) || amount <= 0) {
+            throw new Error('Tailor, category, task type, and a positive special fee are required.')
         }
 
         const { data, error } = await supabase
@@ -1361,20 +1363,22 @@ export const db = {
             .upsert({
                 organization_id: ctx.organizationId,
                 tailor_id,
+                category_type_id,
                 task_type_id,
                 special_fee: amount
             }, {
-                onConflict: 'organization_id,tailor_id,task_type_id'
+                onConflict: 'organization_id,tailor_id,category_type_id,task_type_id'
             })
             .select(`
                 *,
+                category_types(name),
                 task_types(name)
             `)
             .single()
 
         if (error) {
             if (isMissingTailorSpecialPaySchemaError(error)) {
-                throw new Error('Tailor special pay is not ready yet. Apply migration 016_tailor_special_fee.sql in Supabase, then refresh the app.')
+                throw new Error('Tailor special pay is not ready yet. Apply the latest tailor special pay migration in Supabase, then refresh the app.')
             }
 
             console.error(error)
@@ -1383,6 +1387,7 @@ export const db = {
 
         return {
             ...data,
+            category_type_name: data.category_types?.name,
             task_type_name: data.task_types?.name
         }
     },
@@ -1400,7 +1405,7 @@ export const db = {
 
         if (error) {
             if (isMissingTailorSpecialPaySchemaError(error)) {
-                throw new Error('Tailor special pay is not ready yet. Apply migration 016_tailor_special_fee.sql in Supabase, then refresh the app.')
+                throw new Error('Tailor special pay is not ready yet. Apply the latest tailor special pay migration in Supabase, then refresh the app.')
             }
 
             console.error(error)

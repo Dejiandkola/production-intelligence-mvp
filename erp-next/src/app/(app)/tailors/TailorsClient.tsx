@@ -78,15 +78,18 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
         return categories.find(category => category.id === categoryId)?.name || '';
     };
 
-    const getCategoryNameForTask = (taskId) => {
-        return getCategoryName(getTaskCategoryId(taskId));
-    };
 
 
     const getTailorSpecialPayRules = (tailorId) => {
         return specialPayRules
             .filter(rule => rule.tailor_id === tailorId)
-            .sort((a, b) => (a.task_type_name || '').localeCompare(b.task_type_name || ''));
+            .sort((a, b) => {
+                const aCategory = a.category_type_name || getCategoryName(a.category_type_id) || '';
+                const bCategory = b.category_type_name || getCategoryName(b.category_type_id) || '';
+                const categorySort = aCategory.localeCompare(bCategory);
+                if (categorySort !== 0) return categorySort;
+                return (a.task_type_name || '').localeCompare(b.task_type_name || '');
+            });
     };
 
     const resetSpecialPayForm = () => {
@@ -120,11 +123,11 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
     };
 
     const handleEditSpecialPayRule = (rule) => {
-        const categoryId = getTaskCategoryId(rule.task_type_id);
+        const categoryId = rule.category_type_id || getTaskCategoryId(rule.task_type_id);
         const task = taskTypes.find(item => item.id === rule.task_type_id);
         setEditingSpecialPayRule(rule);
         setSpecialPaySearch({
-            category: getCategoryName(categoryId),
+            category: rule.category_type_name || getCategoryName(categoryId),
             task: task?.name || rule.task_type_name || ''
         });
         setSpecialPayForm({
@@ -164,6 +167,7 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
         try {
             await db.saveTailorSpecialPay(
                 activeSpecialPayTailor.id,
+                specialPayForm.category_type_id,
                 specialPayForm.task_type_id,
                 specialPayForm.special_fee
             );
@@ -503,7 +507,7 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
                                     <div key={rule.id} className="flex items-center justify-between gap-3 rounded-md bg-white px-3 py-2 text-sm">
                                         <div>
                                             <div className="font-medium text-maison-primary">{rule.task_type_name || 'Task'}</div>
-                                            <div className="text-xs text-maison-secondary">{getCategoryNameForTask(rule.task_type_id) || 'No category'}</div>
+                                            <div className="text-xs text-maison-secondary">{rule.category_type_name || getCategoryName(rule.category_type_id) || 'No category (legacy)'}</div>
                                             <div className="text-maison-secondary">{formatMoney(rule.special_fee)}</div>
                                         </div>
                                         <div className="flex gap-2">
@@ -619,7 +623,7 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
                                     Cancel Edit
                                 </Button>
                             )}
-                            <Button type="submit" disabled={!canManageTailors || !specialPayForm.task_type_id || selectedSpecialPayTasks.length === 0}>
+                            <Button type="submit" disabled={!canManageTailors || !specialPayForm.category_type_id || !specialPayForm.task_type_id || selectedSpecialPayTasks.length === 0}>
                                 {editingSpecialPayRule ? 'Update Special Fee' : 'Add Special Fee'}
                             </Button>
                         </div>
