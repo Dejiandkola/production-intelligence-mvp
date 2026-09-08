@@ -11,7 +11,7 @@ import { Modal } from '@/components/UI/Modal';
 import { Input } from '@/components/UI/Input';
 import { CSVImporter } from '@/components/Shared/CSVImporter';
 import { formatMoney } from '@/lib/formatters';
-import { Edit2, Plus, Power, PowerOff, Trash2 } from 'lucide-react';
+import { Check, Copy, Edit2, KeyRound, Plus, Power, PowerOff, ShieldOff, Trash2 } from 'lucide-react';
 
 const DEPARTMENTS = ['PANT', 'SHIRT', 'SUIT', 'KAFTAN', 'ACCESSORIES', 'DESIGN', 'CUTTER', 'OTHER'];
 export default function ManageTailors({ canManageTailors }: { canManageTailors: boolean }) {
@@ -30,6 +30,14 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
     const [editingSpecialPayRule, setEditingSpecialPayRule] = useState(null);
     const [specialPayForm, setSpecialPayForm] = useState({ category_type_id: '', task_type_id: '', special_fee: '' });
     const [specialPaySearch, setSpecialPaySearch] = useState({ category: '', task: '' });
+
+    const [isPortalModalOpen, setIsPortalModalOpen] = useState(false);
+    const [activePortalTailor, setActivePortalTailor] = useState(null);
+    const [portalStatus, setPortalStatus] = useState(null);
+    const [portalCredentials, setPortalCredentials] = useState(null);
+    const [portalLoading, setPortalLoading] = useState(false);
+    const [portalError, setPortalError] = useState('');
+    const [copiedField, setCopiedField] = useState('');
 
     const [tailorForm, setTailorForm] = useState({
         name: '', department: 'OTHER', band: 'A', active: true
@@ -158,6 +166,96 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
         setIsSpecialPayModalOpen(false);
         setActiveSpecialPayTailor(null);
         resetSpecialPayForm();
+    };
+
+    const handleOpenPortalModal = async (tailor) => {
+        if (!canManageTailors) return;
+
+        setActivePortalTailor(tailor);
+        setPortalStatus(null);
+        setPortalCredentials(null);
+        setPortalError('');
+        setCopiedField('');
+        setIsPortalModalOpen(true);
+        setPortalLoading(true);
+
+        try {
+            const status = await db.getTailorPortalAccessStatus(tailor.id);
+            setPortalStatus(status);
+        } catch (error) {
+            setPortalError(error.message || 'Unable to load tailor access status.');
+        } finally {
+            setPortalLoading(false);
+        }
+    };
+
+    const handleClosePortalModal = () => {
+        setIsPortalModalOpen(false);
+        setActivePortalTailor(null);
+        setPortalStatus(null);
+        setPortalCredentials(null);
+        setPortalError('');
+        setCopiedField('');
+    };
+
+    const handleGeneratePortalAccess = async () => {
+        if (!canManageTailors || !activePortalTailor) return;
+
+        if (portalStatus?.exists && portalStatus?.is_active) {
+            const confirmed = window.confirm('Generate a new link and PIN? The current link and all active sessions will stop working.');
+            if (!confirmed) return;
+        }
+
+        setPortalLoading(true);
+        setPortalError('');
+        setPortalCredentials(null);
+
+        try {
+            const credentials = await db.generateTailorPortalAccess(activePortalTailor.id);
+            setPortalCredentials({
+                link: `${window.location.origin}/tailor-access/${credentials.access_token}`,
+                pin: credentials.pin
+            });
+            setPortalStatus({
+                exists: true,
+                is_active: true,
+                created_at: new Date().toISOString(),
+                last_accessed_at: null,
+                locked_until: null
+            });
+        } catch (error) {
+            setPortalError(error.message || 'Unable to generate tailor access.');
+        } finally {
+            setPortalLoading(false);
+        }
+    };
+
+    const handleDisablePortalAccess = async () => {
+        if (!canManageTailors || !activePortalTailor) return;
+        if (!window.confirm(`Disable portal access for ${activePortalTailor.name}? Their link and active sessions will stop working.`)) return;
+
+        setPortalLoading(true);
+        setPortalError('');
+
+        try {
+            await db.disableTailorPortalAccess(activePortalTailor.id);
+            setPortalStatus(prev => ({ ...prev, exists: true, is_active: false }));
+            setPortalCredentials(null);
+        } catch (error) {
+            setPortalError(error.message || 'Unable to disable tailor access.');
+        } finally {
+            setPortalLoading(false);
+        }
+    };
+
+    const handleCopyPortalValue = async (field, value) => {
+        try {
+            await navigator.clipboard.writeText(value);
+            setCopiedField(field);
+            window.setTimeout(() => setCopiedField(''), 1800);
+        } catch {
+            setPortalError('Copy failed. Select the value and copy it manually.');
+        }
     };
 
     const handleSaveSpecialPay = async (event) => {
@@ -393,6 +491,14 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
                                             <Plus size={16} />
                                         </button>
                                         <button
+                                            title="Manage Tailor Access"
+                                            onClick={() => handleOpenPortalModal(tailor)}
+                                            disabled={!canManageTailors}
+                                            className={`p-1 transition-colors ${!canManageTailors ? 'text-gray-300 cursor-not-allowed' : 'text-gray-400 hover:text-maison-primary'}`}
+                                        >
+                                            <KeyRound size={16} />
+                                        </button>
+                                        <button
                                             title={tailor.active ? "Deactivate Tailor" : "Activate Tailor"}
                                             onClick={() => handleToggleStatus(tailor)}
                                             disabled={!canManageTailors}
@@ -430,6 +536,107 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
                     )}
                 </Table>
             </Card>
+
+            <Modal
+                isOpen={isPortalModalOpen}
+                onClose={handleClosePortalModal}
+                title={activePortalTailor ? `Tailor Access: ${activePortalTailor.name}` : 'Tailor Access'}
+                maxWidth="max-w-2xl"
+            >
+                <div className="space-y-5">
+                    {portalError && (
+                        <div className="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+                            {portalError}
+                        </div>
+                    )}
+
+                    <div className="flex items-start justify-between gap-4 rounded-lg border border-gray-100 bg-gray-50 p-4">
+                        <div>
+                            <div className="text-sm font-medium text-maison-primary">Portal status</div>
+                            <div className="mt-1 text-sm text-maison-secondary">
+                                {portalLoading && !portalStatus
+                                    ? 'Checking access...'
+                                    : portalStatus?.is_active
+                                        ? 'Active'
+                                        : 'Not active'}
+                            </div>
+                            {portalStatus?.last_accessed_at && (
+                                <div className="mt-1 text-xs text-gray-500">
+                                    Last opened {new Date(portalStatus.last_accessed_at).toLocaleString()}
+                                </div>
+                            )}
+                            {portalStatus?.locked_until && new Date(portalStatus.locked_until) > new Date() && (
+                                <div className="mt-1 text-xs text-amber-700">
+                                    Temporarily locked until {new Date(portalStatus.locked_until).toLocaleString()}
+                                </div>
+                            )}
+                        </div>
+                        <Badge variant={portalStatus?.is_active ? 'success' : 'neutral'}>
+                            {portalStatus?.is_active ? 'Enabled' : 'Disabled'}
+                        </Badge>
+                    </div>
+
+                    {portalCredentials && (
+                        <div className="space-y-4 rounded-lg border border-emerald-200 bg-emerald-50/60 p-4">
+                            <div>
+                                <div className="font-medium text-emerald-900">Access generated</div>
+                                <p className="mt-1 text-sm text-emerald-800">
+                                    Copy both values now. The PIN cannot be shown again.
+                                </p>
+                            </div>
+
+                            <div>
+                                <label className="mb-1.5 block text-xs font-medium uppercase text-gray-500">Private link</label>
+                                <div className="flex gap-2">
+                                    <input
+                                        readOnly
+                                        value={portalCredentials.link}
+                                        onFocus={(event) => event.target.select()}
+                                        className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-maison-primary"
+                                    />
+                                    <Button type="button" variant="secondary" onClick={() => handleCopyPortalValue('link', portalCredentials.link)}>
+                                        {copiedField === 'link' ? <Check size={16} /> : <Copy size={16} />}
+                                        <span className="ml-2">{copiedField === 'link' ? 'Copied' : 'Copy'}</span>
+                                    </Button>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="mb-1.5 block text-xs font-medium uppercase text-gray-500">Six-digit PIN</label>
+                                <div className="flex gap-2">
+                                    <input
+                                        readOnly
+                                        value={portalCredentials.pin}
+                                        onFocus={(event) => event.target.select()}
+                                        className="w-40 rounded-lg border border-gray-200 bg-white px-3 py-2 font-mono text-lg tracking-[0.2em] text-maison-primary"
+                                    />
+                                    <Button type="button" variant="secondary" onClick={() => handleCopyPortalValue('pin', portalCredentials.pin)}>
+                                        {copiedField === 'pin' ? <Check size={16} /> : <Copy size={16} />}
+                                        <span className="ml-2">{copiedField === 'pin' ? 'Copied' : 'Copy'}</span>
+                                    </Button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="rounded-lg border border-gray-100 p-4 text-sm text-maison-secondary">
+                        The tailor can only view their task references, work status, and payment amounts. They cannot change ERP records or see customer details.
+                    </div>
+
+                    <div className="flex flex-wrap justify-end gap-3 border-t border-gray-100 pt-4">
+                        {portalStatus?.is_active && (
+                            <Button type="button" variant="secondary" onClick={handleDisablePortalAccess} disabled={portalLoading}>
+                                <ShieldOff size={16} className="mr-2" />
+                                Disable Access
+                            </Button>
+                        )}
+                        <Button type="button" onClick={handleGeneratePortalAccess} isLoading={portalLoading}>
+                            <KeyRound size={16} className="mr-2" />
+                            {portalStatus?.exists ? 'Generate New Link & PIN' : 'Generate Link & PIN'}
+                        </Button>
+                    </div>
+                </div>
+            </Modal>
 
             <Modal
                 isOpen={isTailorModalOpen}
