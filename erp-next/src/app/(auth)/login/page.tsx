@@ -20,17 +20,23 @@ export default function LoginPage() {
         e.preventDefault()
         setIsLoading(true)
         setErrorMsg('')
-        const supabase = createClient()
-        const { error } = await supabase.auth.signInWithPassword({
-            email,
-            password,
-        })
+        try {
+            const supabase = createClient()
+            const { error } = await supabase.auth.signInWithPassword({
+                email,
+                password,
+            })
 
-        if (error) {
-            setErrorMsg(error.message)
+            if (error) {
+                setErrorMsg(error.message)
+                setIsLoading(false)
+            } else {
+                window.location.href = '/'
+            }
+        } catch (error) {
+            console.error('Login request failed:', error)
+            setErrorMsg('Unable to reach the login service. Check your connection and try again.')
             setIsLoading(false)
-        } else {
-            window.location.href = '/'
         }
     }
 

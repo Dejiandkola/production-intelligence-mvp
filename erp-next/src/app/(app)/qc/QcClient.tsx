@@ -3,6 +3,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
+import Link from 'next/link';
 import { db } from '@/services/db';
 import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
@@ -233,6 +234,11 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
                 </div>
 
                 <div className="flex items-center gap-3">
+                    <Link href="/qc/tailor-work">
+                        <Button variant="secondary">
+                            Tailor Work
+                        </Button>
+                    </Link>
                     <Button variant="secondary" onClick={handleExport}>
                         <Download size={16} className="mr-2" />
                         Export
