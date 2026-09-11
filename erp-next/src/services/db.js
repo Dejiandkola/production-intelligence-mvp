@@ -15,6 +15,19 @@ function isMissingTailorSpecialPaySchemaError(error) {
         || (message.includes('tailor_special_pay') && message.includes('schema cache'))
         || (message.includes('calculate_assignment_pay') && message.includes('schema cache'))
 }
+
+function isMissingNegotiatedPaySchemaError(error) {
+    const message = String(error?.message || '')
+
+    return error?.code === 'PGRST202'
+        || error?.code === 'PGRST205'
+        || (message.includes('request_assignment_price_review') && message.includes('schema cache'))
+        || (message.includes('set_assignment_negotiated_price') && message.includes('schema cache'))
+        || (message.includes('clear_assignment_negotiated_price') && message.includes('schema cache'))
+        || (message.includes('price_review_requested') && message.includes('schema cache'))
+        || (message.includes('negotiated_pay_amount') && message.includes('schema cache'))
+        || (message.includes('pay_source') && message.includes('schema cache'))
+}
 export class NotAuthenticatedError extends Error {
     constructor(message = "User not authenticated") {
         super(message)
@@ -1786,6 +1799,17 @@ export const db = {
                     product_types(name),
                     work_assignments(
                         id,
+                        status,
+                        pay_amount,
+                        rate_snapshot,
+                        pay_source,
+                        price_review_requested,
+                        price_review_reason,
+                        price_review_requested_at,
+                        price_review_resolved_at,
+                        negotiated_pay_amount,
+                        negotiated_price_note,
+                        negotiated_price_set_at,
                         category_type_id,
                         task_type_id,
                         tailor_id,
@@ -1876,6 +1900,15 @@ export const db = {
                     id,
                     status,
                     pay_amount,
+                    rate_snapshot,
+                    pay_source,
+                    price_review_requested,
+                    price_review_reason,
+                    price_review_requested_at,
+                    price_review_resolved_at,
+                    negotiated_pay_amount,
+                    negotiated_price_note,
+                    negotiated_price_set_at,
                     tailors(name),
                     category_types(name),
                     task_types(name)
@@ -2500,6 +2533,94 @@ async updateTicket(id, { customer_name }) {
         }
 
         return data;
+    },
+
+    async requestAssignmentPriceReview(assignmentId, reason) {
+        const ctx = await getContext()
+
+        if (!ctx.permissions.includes('manage_production') && !ctx.permissions.includes('manage_qc')) {
+            throw new PermissionDeniedError('Requires manage_production or manage_qc permission')
+        }
+
+        const trimmedReason = reason?.trim()
+
+        if (!assignmentId || !trimmedReason) {
+            throw new Error('Assignment and review reason are required.')
+        }
+
+        const { data, error } = await supabase.rpc('request_assignment_price_review', {
+            p_assignment_id: assignmentId,
+            p_reason: trimmedReason
+        })
+
+        if (error) {
+            if (isMissingNegotiatedPaySchemaError(error)) {
+                throw new Error('Negotiated price review is not ready yet. Apply migration 020_negotiated_assignment_pay.sql in Supabase, then refresh the app.')
+            }
+
+            console.error(error)
+            throw new Error(error.message || 'Failed to request price review.')
+        }
+
+        return data
+    },
+
+    async setAssignmentNegotiatedPrice(assignmentId, amount, note = '') {
+        const ctx = await getContext()
+
+        if (!ctx.permissions.includes('manage_payments') && !ctx.permissions.includes('admin')) {
+            throw new PermissionDeniedError('Requires manage_payments or admin permission')
+        }
+
+        const numericAmount = Number(amount)
+
+        if (!assignmentId || !Number.isFinite(numericAmount) || numericAmount < 0) {
+            throw new Error('Assignment and a valid negotiated price are required.')
+        }
+
+        const { data, error } = await supabase.rpc('set_assignment_negotiated_price', {
+            p_assignment_id: assignmentId,
+            p_negotiated_pay_amount: numericAmount,
+            p_note: note?.trim() || null
+        })
+
+        if (error) {
+            if (isMissingNegotiatedPaySchemaError(error)) {
+                throw new Error('Negotiated price is not ready yet. Apply migration 020_negotiated_assignment_pay.sql in Supabase, then refresh the app.')
+            }
+
+            console.error(error)
+            throw new Error(error.message || 'Failed to save negotiated price.')
+        }
+
+        return data
+    },
+
+    async clearAssignmentNegotiatedPrice(assignmentId) {
+        const ctx = await getContext()
+
+        if (!ctx.permissions.includes('manage_payments') && !ctx.permissions.includes('admin')) {
+            throw new PermissionDeniedError('Requires manage_payments or admin permission')
+        }
+
+        if (!assignmentId) {
+            throw new Error('Assignment is required.')
+        }
+
+        const { data, error } = await supabase.rpc('clear_assignment_negotiated_price', {
+            p_assignment_id: assignmentId
+        })
+
+        if (error) {
+            if (isMissingNegotiatedPaySchemaError(error)) {
+                throw new Error('Negotiated price is not ready yet. Apply migration 020_negotiated_assignment_pay.sql in Supabase, then refresh the app.')
+            }
+
+            console.error(error)
+            throw new Error(error.message || 'Failed to clear negotiated price.')
+        }
+
+        return data
     },
 
     async getTasks() {

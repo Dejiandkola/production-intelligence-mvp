@@ -3,12 +3,13 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { db } from '@/services/db';
 import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
 import { Table, TableRow, TableCell, Badge } from '@/components/UI/Table';
 import { Modal } from '@/components/UI/Modal';
-import { Search, FilterX, Clock, CheckCircle2, ChevronDown, ChevronRight } from 'lucide-react';
+import { Search, FilterX, Clock, CheckCircle2, ChevronDown, ChevronRight, ArrowLeft } from 'lucide-react';
 import { format } from 'date-fns';
 import { formatMoney } from '@/lib/formatters';
 
@@ -25,6 +26,17 @@ const STATUS_TABS = [
 
 function refreshNewItemsBadge() {
     window.dispatchEvent(new Event('new-items-count:refresh'));
+}
+
+function uniqueById(rows = []) {
+    const seen = new Set();
+
+    return rows.filter((row) => {
+        if (!row?.id) return true;
+        if (seen.has(row.id)) return false;
+        seen.add(row.id);
+        return true;
+    });
 }
 
 export default function ItemList({ canManageProduction }: { canManageProduction: boolean }) {
@@ -58,6 +70,9 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
         filters.ticketId !== debouncedSearch.ticketId ||
         filters.customerName !== debouncedSearch.customerName;
     const [expandedGroups, setExpandedGroups] = useState({});
+    const [activeTaskDetailItemId, setActiveTaskDetailItemId] = useState('');
+    const [activeTaskActionMenuId, setActiveTaskActionMenuId] = useState('');
+    const [taskActionMenuPosition, setTaskActionMenuPosition] = useState(null);
     const [activeAssignmentDialog, setActiveAssignmentDialog] = useState({ itemId: '', mode: '', categoryName: '' });
     const [assignmentForm, setAssignmentForm] = useState({
         itemId: '',
@@ -116,6 +131,24 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
         return () => observer.disconnect();
     }, [loading, loadingMore, isSearchDebouncing, items.length, page, totalTickets, activeTab, filters.productType, filters.startDate, filters.endDate, debouncedSearch]);
 
+    useEffect(() => {
+        if (!activeTaskActionMenuId) return;
+
+        const closeMenu = () => {
+            setActiveTaskActionMenuId('');
+            setTaskActionMenuPosition(null);
+        };
+        document.addEventListener('click', closeMenu);
+        window.addEventListener('resize', closeMenu);
+        window.addEventListener('scroll', closeMenu, true);
+
+        return () => {
+            document.removeEventListener('click', closeMenu);
+            window.removeEventListener('resize', closeMenu);
+            window.removeEventListener('scroll', closeMenu, true);
+        };
+    }, [activeTaskActionMenuId]);
+
     const loadPageData = async () => {
         const [summaryData, ratesData, tailorsData, productTypesData, specialPayData] = await Promise.all([
             db.getProductionItemSummary(),
@@ -166,7 +199,7 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
             ]);
             if (requestId !== activeRequestIdRef.current) return;
 
-            setItems(prev => reset ? result.items : [...prev, ...result.items]);
+            setItems(prev => reset ? uniqueById(result.items) : uniqueById([...prev, ...result.items]));
             setTotalTickets(result.totalTickets);
             if (reset) setSummary(summaryData);
             setPage(nextPage);
@@ -228,6 +261,33 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
         if (status === 'OUT_OF_PRODUCTION') return ['OUT_OF_PRODUCTION', 'IN_PRODUCTION', 'ARCHIVED'];
         if (status === 'ARCHIVED') return ['ARCHIVED', 'IN_PRODUCTION', 'OUT_OF_PRODUCTION'];
         return [status];
+    };
+
+    const getAssignmentStatusVariant = (status) => {
+        switch (status) {
+            case 'QC_PASSED':
+            case 'PAID':
+            case 'Approved':
+                return 'success';
+            case 'QC_FAILED':
+            case 'Rejected':
+            case 'REVERSED':
+                return 'danger';
+            case 'CREATED':
+                return 'warning';
+            default:
+                return 'neutral';
+        }
+    };
+
+    const getAssignmentStatusLabel = (status) => {
+        if (!status) return 'Created';
+        if (status === 'QC_PASSED') return 'QC Passed';
+        if (status === 'QC_FAILED') return 'QC Failed';
+        if (status === 'PAID') return 'Paid';
+        if (status === 'REVERSED') return 'Reversed';
+        if (status === 'CREATED') return 'Created';
+        return status;
     };
 
     const getCategoryBadgeClass = (categoryName) => {
@@ -308,6 +368,9 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
         tailor.name?.toLowerCase().includes(assignmentSearch.trim().toLowerCase())
     );
     const isArchivedAssignmentItem = activeAssignmentItem?.status === 'ARCHIVED';
+    const selectedAssignmentForDialog = activeAssignmentItem?.work_assignments?.find(assignment =>
+        assignment.id === assignmentForm.assignmentId
+    ) || null;
     const selectedAssignmentTailor = tailors.find(tailor => tailor.id === assignmentForm.tailor_id);
     const assignmentTailorBand = selectedAssignmentTailor?.band || 'A';
     const selectedAssignmentRate = rateCards.find(rate =>
@@ -329,6 +392,106 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
         ? Number(selectedAssignmentSpecialPay.special_fee || 0)
         : baseAssignmentPay;
     const assignmentPay = formatMoney(finalAssignmentPay);
+    const activeTaskDetailItem = items.find(item => item.id === activeTaskDetailItemId) || null;
+    const activeTaskDetailAssignments = uniqueById(activeTaskDetailItem?.work_assignments || []);
+    const canManageTaskDetailAssignments = Boolean(activeTaskDetailItem) && canManageProduction && ['NEW', 'IN_PRODUCTION'].includes(activeTaskDetailItem.status);
+    const isTaskDetailAssignmentMode = Boolean(
+        activeTaskDetailItem &&
+        activeAssignmentDialog.itemId === activeTaskDetailItem.id &&
+        activeAssignmentDialog.mode
+    );
+    const assignmentDialogTitle =
+        activeAssignmentDialog.mode === 'create'
+            ? 'Assign Task'
+            : activeAssignmentDialog.mode === 'edit'
+                ? 'Edit Task'
+                : activeAssignmentDialog.mode === 'delete'
+                    ? 'Delete Task'
+                    : 'Task';
+    const getAssignmentPaySource = (assignment) => {
+        if (
+            assignment.pay_source === 'NEGOTIATED_PRICE' ||
+            (assignment.negotiated_pay_amount !== null && assignment.negotiated_pay_amount !== undefined)
+        ) {
+            return 'Negotiated Price';
+        }
+
+        if (assignment.pay_source === 'SPECIAL_PAY') {
+            return 'Special Pay';
+        }
+
+        if (assignment.pay_source === 'RATE_CARD') {
+            return 'Rate Card';
+        }
+
+        const specialPay = specialPayRules.find(rule =>
+            rule.tailor_id === assignment.tailor_id &&
+            rule.category_type_id === assignment.category_type_id &&
+            rule.task_type_id === assignment.task_type_id &&
+            rule.special_fee !== null &&
+            rule.special_fee !== undefined
+        );
+
+        return specialPay ? 'Special Pay' : 'Rate Card';
+    };
+
+    const getAssignmentPaySourceVariant = (source) => {
+        if (source === 'Negotiated Price') return 'warning';
+        if (source === 'Special Pay') return 'success';
+        return 'neutral';
+    };
+
+    const closeTaskActionMenu = () => {
+        setActiveTaskActionMenuId('');
+        setTaskActionMenuPosition(null);
+    };
+
+    const toggleTaskActionMenu = (assignmentId, event) => {
+        event.stopPropagation();
+
+        if (activeTaskActionMenuId === assignmentId) {
+            closeTaskActionMenu();
+            return;
+        }
+
+        const rect = event.currentTarget.getBoundingClientRect();
+        const menuWidth = 192;
+        const menuHeight = 92;
+        const gap = 8;
+        const viewportPadding = 16;
+        const opensUp = rect.bottom + menuHeight + gap > window.innerHeight && rect.top > menuHeight + gap;
+        const top = opensUp ? rect.top - menuHeight - gap : rect.bottom + gap;
+        const left = Math.min(
+            window.innerWidth - menuWidth - viewportPadding,
+            Math.max(viewportPadding, rect.right - menuWidth)
+        );
+
+        setTaskActionMenuPosition({ top, left, width: menuWidth });
+        setActiveTaskActionMenuId(assignmentId);
+    };
+
+    const handleRequestPriceReview = async (assignment) => {
+        if (!canManageProduction) return;
+        closeTaskActionMenu();
+
+        if (assignment.status !== 'CREATED') {
+            alert('Only pending tasks can be sent for price review.');
+            return;
+        }
+
+        const reason = window.prompt('Why does this task need a negotiated price?');
+        const trimmedReason = reason?.trim();
+
+        if (!trimmedReason) return;
+
+        try {
+            await db.requestAssignmentPriceReview(assignment.id, trimmedReason);
+            await loadItems();
+        } catch (error) {
+            alert(error?.message || 'Failed to request price review.');
+        }
+    };
+
     const openAssignmentForm = (item, categoryName = '', mode = 'create') => {
         const categoryAssignment = getCategoryAssignment(item, categoryName);
         const categoryId = getCategoryId(item, categoryName) || categoryAssignment?.category_type_id || '';
@@ -343,20 +506,6 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
         });
         setAssignmentCategorySearch(categoryName);
         setAssignmentSearch(mode === 'edit' ? (categoryAssignment?.tailors?.name || '') : '');
-    };
-
-    const openDeleteAssignmentDialog = (item, categoryName = '') => {
-        const categoryAssignment = getCategoryAssignment(item, categoryName);
-
-        setActiveAssignmentDialog({ itemId: item.id, mode: 'delete', categoryName });
-        setAssignmentForm({
-            itemId: item.id,
-            assignmentId: categoryAssignment?.id || '',
-            category_type_id: categoryAssignment?.category_type_id || getCategoryId(item, categoryName) || '',
-            task_type_id: categoryAssignment?.task_type_id || '',
-            tailor_id: categoryAssignment?.tailor_id || '',
-        });
-        setAssignmentCategorySearch(categoryName);
     };
 
     const closeAssignmentDialog = () => {
@@ -522,6 +671,281 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
         }));
     };
 
+    const openTaskDetailDialog = (item) => {
+        closeTaskActionMenu();
+        closeAssignmentDialog();
+        setActiveTaskDetailItemId(item.id);
+    };
+
+    const closeTaskDetailDialog = () => {
+        setActiveTaskDetailItemId('');
+        closeAssignmentDialog();
+        closeTaskActionMenu();
+    };
+
+    const openTaskDetailAssignmentForm = (item, categoryName = '', mode = 'create') => {
+        closeTaskActionMenu();
+        setActiveTaskDetailItemId(item.id);
+        openAssignmentForm(item, categoryName, mode);
+    };
+
+    const openTaskDetailExistingAssignmentForm = (item, assignment, mode) => {
+        const categoryName = assignment.category_types?.name || '';
+
+        closeTaskActionMenu();
+        setActiveTaskDetailItemId(item.id);
+        setActiveAssignmentDialog({ itemId: item.id, mode, categoryName });
+        setAssignmentForm({
+            itemId: item.id,
+            assignmentId: assignment.id || '',
+            category_type_id: assignment.category_type_id || '',
+            task_type_id: assignment.task_type_id || '',
+            tailor_id: assignment.tailor_id || '',
+        });
+        setAssignmentCategorySearch(categoryName);
+        setAssignmentSearch(mode === 'edit' ? (assignment.tailors?.name || '') : '');
+    };
+
+    const renderAssignmentDialogContent = ({ embedded = false } = {}) => {
+        if (!activeAssignmentItem) return null;
+
+        const deleteCategoryName = selectedAssignmentForDialog?.category_types?.name || activeAssignmentCategoryName || '-';
+        const deleteTaskName = selectedAssignmentForDialog?.task_types?.name || '-';
+        const deleteAssigneeName = selectedAssignmentForDialog?.tailors?.name || '-';
+
+        return (
+            <div className="space-y-4">
+                {embedded && (
+                    <div className="border-b border-gray-100 pb-4">
+                        <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={closeAssignmentDialog}
+                            className="-ml-3 mb-2 gap-1"
+                        >
+                            <ArrowLeft size={14} />
+                            Back to Tasks
+                        </Button>
+                        <h4 className="font-serif text-lg font-medium text-maison-primary">{assignmentDialogTitle}</h4>
+                        <p className="text-sm text-maison-secondary">
+                            {activeAssignmentDialog.mode === 'create'
+                                ? 'Assign a production task to this product.'
+                                : activeAssignmentDialog.mode === 'edit'
+                                    ? 'Update the task type or assignee without leaving this product.'
+                                    : 'Confirm that this task should be removed from the product.'}
+                        </p>
+                    </div>
+                )}
+
+                {!embedded && (
+                    <div className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
+                        <div className="flex items-center gap-3">
+                            <span className="font-mono text-xs text-maison-primary">{activeAssignmentItem.item_key}</span>
+                            <Badge variant="neutral">{activeAssignmentItem.product_type_name}</Badge>
+                            {isArchivedAssignmentItem && <Badge variant="warning">Archived</Badge>}
+                        </div>
+                        <p className="mt-1 text-sm text-maison-secondary">
+                            Ticket: {activeAssignmentItem.ticket_number} | Customer: {activeAssignmentItem.customer_name}
+                        </p>
+                    </div>
+                )}
+
+                {!embedded && isArchivedAssignmentItem && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                        This item is archived. Production can review assignment history, but task assignment and edits are disabled.
+                    </div>
+                )}
+
+                {activeAssignmentDialog.mode === 'delete' ? (
+                    <div className="space-y-4">
+                        <div className="rounded-lg border border-red-100 bg-red-50 px-4 py-3">
+                            <p className="text-sm font-medium text-red-800">Delete this task assignment?</p>
+                            <p className="mt-1 text-sm text-red-700">
+                                This removes the task from the product. It will no longer appear as an active production assignment.
+                            </p>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-3 rounded-lg border border-gray-100 bg-white p-4 sm:grid-cols-3">
+                            <div>
+                                <p className="text-xs uppercase tracking-wide text-gray-400">Category</p>
+                                <p className="mt-1 truncate text-sm font-medium text-maison-primary" title={deleteCategoryName}>{deleteCategoryName}</p>
+                            </div>
+                            <div>
+                                <p className="text-xs uppercase tracking-wide text-gray-400">Task</p>
+                                <p className="mt-1 truncate text-sm font-medium text-maison-primary" title={deleteTaskName}>{deleteTaskName}</p>
+                            </div>
+                            <div>
+                                <p className="text-xs uppercase tracking-wide text-gray-400">Assignee</p>
+                                <p className="mt-1 truncate text-sm font-medium text-maison-primary" title={deleteAssigneeName}>{deleteAssigneeName}</p>
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end gap-2">
+                            <Button size="sm" variant="ghost" onClick={closeAssignmentDialog}>
+                                Cancel
+                            </Button>
+                            <Button
+                                size="sm"
+                                variant="danger"
+                                disabled={!assignmentForm.assignmentId || isArchivedAssignmentItem}
+                                onClick={() => handleDeleteAssignment(assignmentForm.assignmentId)}
+                            >
+                                Delete Task
+                            </Button>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                            <div>
+                                <label className="mb-1.5 block text-sm font-medium text-maison-secondary">Category</label>
+                                <div className="space-y-2">
+                                    <input
+                                        type="text"
+                                        value={assignmentCategorySearch}
+                                        onChange={(e) => {
+                                            setAssignmentCategorySearch(e.target.value);
+                                            setActiveAssignmentDialog(prev => ({ ...prev, categoryName: '' }));
+                                            setAssignmentForm(prev => ({
+                                                ...prev,
+                                                assignmentId: '',
+                                                category_type_id: '',
+                                                task_type_id: '',
+                                                tailor_id: ''
+                                            }));
+                                            setAssignmentSearch('');
+                                        }}
+                                        placeholder="Type category name..."
+                                        disabled={isArchivedAssignmentItem}
+                                        className="block w-full rounded-lg border-gray-200 shadow-sm sm:text-sm py-2.5"
+                                    />
+                                    <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white">
+                                        {filteredAssignmentCategories.length > 0 ? filteredAssignmentCategories.map(category => (
+                                            <button
+                                                key={category.name}
+                                                type="button"
+                                                onClick={() => handleSelectAssignmentCategory(activeAssignmentItem, category.name)}
+                                                className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50"
+                                            >
+                                                <span>{category.name}</span>
+                                                {category.assignment && <span className="text-xs text-gray-500">Assigned</span>}
+                                            </button>
+                                        )) : (
+                                            <div className="px-3 py-2 text-sm text-gray-500">
+                                                {activeAssignmentDialog.mode === 'create'
+                                                    ? 'No categories available to assign.'
+                                                    : 'No matching assigned categories found.'}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="mb-1.5 block text-sm font-medium text-maison-secondary">Assignee</label>
+                                <div className="space-y-2">
+                                    <input
+                                        type="text"
+                                        value={assignmentSearch}
+                                        onChange={(e) => {
+                                            setAssignmentSearch(e.target.value);
+                                            setAssignmentForm(prev => ({ ...prev, tailor_id: '' }));
+                                        }}
+                                        placeholder={activeAssignmentCategoryName ? `Type ${activeAssignmentCategoryName.toLowerCase()} assignee name...` : 'Select category first...'}
+                                        disabled={!activeAssignmentCategoryName || isArchivedAssignmentItem}
+                                        className="block w-full rounded-lg border-gray-200 shadow-sm sm:text-sm py-2.5"
+                                    />
+                                    <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white">
+                                        {!activeAssignmentCategoryName ? (
+                                            <div className="px-3 py-2 text-sm text-gray-500">Select a category first.</div>
+                                        ) : filteredAssignmentTailors.length > 0 ? filteredAssignmentTailors.map(tailor => (
+                                            <button
+                                                key={tailor.id}
+                                                type="button"
+                                                onClick={() => {
+                                                    setAssignmentForm(prev => ({ ...prev, tailor_id: tailor.id }));
+                                                    setAssignmentSearch(tailor.name);
+                                                }}
+                                                className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50"
+                                            >
+                                                <span>{tailor.name}</span>
+                                                <span className="text-xs text-gray-500">Band {tailor.band || 'A'}</span>
+                                            </button>
+                                        )) : (
+                                            <div className="px-3 py-2 text-sm text-gray-500">No matching assignees found.</div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="mb-1.5 block text-sm font-medium text-maison-secondary">Task Type</label>
+                                <select
+                                    value={assignmentForm.task_type_id}
+                                    onChange={(e) => setAssignmentForm(prev => ({ ...prev, task_type_id: e.target.value }))}
+                                    disabled={!activeAssignmentCategoryName || isArchivedAssignmentItem}
+                                    className="block w-full rounded-lg border-gray-200 shadow-sm sm:text-sm py-2.5"
+                                >
+                                    <option value="">{activeAssignmentCategoryName ? `Select ${activeAssignmentCategoryName} Task...` : 'Select Category First'}</option>
+                                    {activeAssignmentTaskOptions.map(task => (
+                                        <option key={task.id} value={task.id}>
+                                            {task.name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div className="rounded-lg border border-gray-100 bg-white p-4 shadow-sm">
+                            <div className="mb-1 flex justify-between text-sm">
+                                <span className="text-gray-500">Category:</span>
+                                <span className="font-medium">{activeAssignmentCategoryName || '-'}</span>
+                            </div>
+                            <div className="mb-1 flex justify-between text-sm">
+                                <span className="text-gray-500">Pay Band:</span>
+                                <span className="font-medium">Band {assignmentTailorBand}</span>
+                            </div>
+                            <div className="mb-1 flex justify-between text-sm">
+                                <span className="text-gray-500">Base Rate:</span>
+                                <span className="font-medium">{formatMoney(baseAssignmentPay)}</span>
+                            </div>
+                            {selectedAssignmentSpecialPay && (
+                                <div className="mb-1 flex justify-between text-sm text-emerald-700">
+                                    <span>Special Fee:</span>
+                                    <span className="font-medium">{formatMoney(selectedAssignmentSpecialPay.special_fee)}</span>
+                                </div>
+                            )}
+                            <div className="mt-2 flex justify-between border-t border-gray-100 pt-2 text-sm font-bold text-maison-primary">
+                                <span>Final Pay:</span>
+                                <span>{assignmentPay}</span>
+                            </div>
+                        </div>
+                        <div className="flex justify-end gap-2">
+                            <Button size="sm" variant="ghost" onClick={closeAssignmentDialog}>
+                                Cancel
+                            </Button>
+                            <Button
+                                size="sm"
+                                disabled={!activeAssignmentCategoryName || !assignmentForm.task_type_id || !assignmentForm.tailor_id || isArchivedAssignmentItem}
+                                onClick={() => {
+                                    const item = items.find(entry => entry.id === activeAssignmentDialog.itemId);
+                                    if (!item) return;
+                                    if (activeAssignmentDialog.mode === 'edit') {
+                                        handleUpdateAssignment();
+                                    } else {
+                                        handleCreateAssignment(item);
+                                    }
+                                }}
+                            >
+                                {activeAssignmentDialog.mode === 'edit' ? 'Save Changes' : 'Assign Task'}
+                            </Button>
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+    };
+
     return (
         <div className="space-y-6">
             <div className="flex justify-between items-center">
@@ -681,28 +1105,39 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
                             {/* Accordion Body */}
                             {isExpanded && (
                                 <div className="bg-white">
-                                    <Table headers={['Item Key', 'Product', 'Categories', 'Status', 'Date', 'Actions']}>
+                                    <Table
+                                        tableClassName="table-fixed min-w-[980px]"
+                                        headers={[
+                                            { label: 'Item Key', className: 'w-[18%]' },
+                                            { label: 'Product', className: 'w-[17%]' },
+                                            { label: 'Categories', className: 'w-[20%]' },
+                                            { label: 'Status', className: 'w-[22%]' },
+                                            { label: 'Date', className: 'w-[11%]' },
+                                            { label: 'Actions', className: 'w-[12%]' },
+                                        ]}
+                                    >
                                         {group.items.map((item) => {
                                             const assignedCategories = item.work_assignments?.map(wa => wa.category_types?.name).filter(Boolean) || [];
                                             const uniqueCategories = [...new Set(assignedCategories)];
-                                            const productionAssignmentCategories = getAvailableProductionCategories(item);
-                                            const hasAssignableProductionCategory = productionAssignmentCategories.some(category => !category.assignment);
-                                            const hasEditableProductionAssignment = productionAssignmentCategories.some(category => category.assignment);
-                                            const canManageItemAssignments = canManageProduction && ['NEW', 'IN_PRODUCTION'].includes(item.status);
                                             const isStatusUpdating = Boolean(updatingStatusIds[item.id]);
 
                                             return (
                                             <TableRow key={item.id}>
-                                                <TableCell className="font-medium font-mono text-xs">{item.item_key}</TableCell>
-                                                <TableCell>{item.product_type_name}</TableCell>
-                                                <TableCell className="whitespace-normal">
+                                                <TableCell className="max-w-0 font-medium font-mono text-xs">
+                                                    <span className="block truncate" title={item.item_key}>{item.item_key}</span>
+                                                </TableCell>
+                                                <TableCell className="max-w-0">
+                                                    <span className="block truncate" title={item.product_type_name}>{item.product_type_name}</span>
+                                                </TableCell>
+                                                <TableCell className="max-w-0 whitespace-normal">
                                                     {uniqueCategories.length > 0 ? (
                                                         <div className="flex flex-wrap gap-1">
                                                             {uniqueCategories.map(category => (
                                                                 <Badge
                                                                     key={category}
                                                                     variant="neutral"
-                                                                    className={getCategoryBadgeClass(category)}
+                                                                    className={`${getCategoryBadgeClass(category)} max-w-full truncate`}
+                                                                    title={category}
                                                                 >
                                                                     {category}
                                                                 </Badge>
@@ -712,9 +1147,9 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
                                                         <span className="text-gray-300">-</span>
                                                     )}
                                                 </TableCell>
-                                                <TableCell>
+                                                <TableCell className="max-w-0">
                                                     {canManageProduction && item.status !== 'NEW' ? (
-                                                        <div className="relative min-w-[210px]">
+                                                        <div className="relative w-full max-w-[280px]">
                                                             <select
                                                                 value={item.status}
                                                                 onChange={(e) => handleStatusChange(item, e.target.value)}
@@ -744,39 +1179,15 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
                                                 <TableCell className="text-gray-500 text-sm">
                                                     {item.created_at ? format(new Date(item.created_at), 'MMM d, yyyy') : '-'}
                                                 </TableCell>
-                                                <TableCell>
+                                                <TableCell className="max-w-0">
                                                     <div className="flex flex-wrap items-center gap-2">
-                                                        {canManageProduction && hasAssignableProductionCategory && (
-                                                            <Button
-                                                                size="sm"
-                                                                variant="secondary"
-                                                                disabled={!canManageItemAssignments}
-                                                                onClick={() => openAssignmentForm(item, '', 'create')}
-                                                            >
-                                                                Assign Task
-                                                            </Button>
-                                                        )}
-                                                        {canManageProduction && hasEditableProductionAssignment && (
-                                                            <>
-                                                                <Button
-                                                                    size="sm"
-                                                                    variant="secondary"
-                                                                    disabled={!canManageItemAssignments}
-                                                                    onClick={() => openAssignmentForm(item, '', 'edit')}
-                                                                >
-                                                                    Edit Task
-                                                                </Button>
-                                                                <Button
-                                                                    size="sm"
-                                                                    variant="danger"
-                                                                    disabled={!canManageItemAssignments}
-                                                                    onClick={() => openDeleteAssignmentDialog(item, '')}
-                                                                >
-                                                                    Delete Task
-                                                                </Button>
-                                                            </>
-                                                        )}
-
+                                                        <Button
+                                                            size="sm"
+                                                            variant="secondary"
+                                                            onClick={() => openTaskDetailDialog(item)}
+                                                        >
+                                                            Manage Tasks
+                                                        </Button>
                                                     </div>
                                                 </TableCell>
                                             </TableRow>
@@ -807,239 +1218,210 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
                 </div>
             </div>
             <Modal
-                isOpen={Boolean(activeAssignmentDialog.itemId)}
-                onClose={closeAssignmentDialog}
-                title={
-                    activeAssignmentDialog.mode === 'create'
-                        ? 'Assign Task'
-                        : activeAssignmentDialog.mode === 'edit'
-                            ? 'Edit Task'
-                            : 'Delete Task'
-                }
-                maxWidth="max-w-4xl"
+                isOpen={Boolean(activeTaskDetailItemId)}
+                onClose={closeTaskDetailDialog}
+                title="Production Tasks"
+                maxWidth="max-w-6xl"
             >
-                {activeAssignmentItem && (
-                    <div className="mb-4 rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
-                        <div className="flex items-center gap-3">
-                            <span className="font-mono text-xs text-maison-primary">{activeAssignmentItem.item_key}</span>
-                            <Badge variant="neutral">{activeAssignmentItem.product_type_name}</Badge>
-                            {isArchivedAssignmentItem && <Badge variant="warning">Archived</Badge>}
-                        </div>
-                        <p className="mt-1 text-sm text-maison-secondary">
-                            Ticket: {activeAssignmentItem.ticket_number} | Customer: {activeAssignmentItem.customer_name}
-                        </p>
-                    </div>
-                )}
-
-                {isArchivedAssignmentItem && (
-                    <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                        This item is archived. Production can review assignment history, but task assignment and edits are disabled.
-                    </div>
-                )}
-
-                {activeAssignmentDialog.mode === 'delete' ? (
-                    <div className="space-y-4">
-                        <div className="space-y-2">
-                            <input
-                                type="text"
-                                value={assignmentCategorySearch}
-                                onChange={(e) => {
-                                    setAssignmentCategorySearch(e.target.value);
-                                    setActiveAssignmentDialog(prev => ({ ...prev, categoryName: '' }));
-                                    setAssignmentForm(prev => ({
-                                        ...prev,
-                                        assignmentId: '',
-                                        category_type_id: '',
-                                        task_type_id: '',
-                                        tailor_id: ''
-                                    }));
-                                    setAssignmentSearch('');
-                                }}
-                                placeholder="Type category name..."
-                                className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-maison-primary/20"
-                            />
-                            <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white">
-                                {filteredAssignmentCategories.length > 0 ? filteredAssignmentCategories.map(category => (
-                                    <button
-                                        key={category.name}
-                                        type="button"
-                                        onClick={() => handleSelectAssignmentCategory(activeAssignmentItem, category.name)}
-                                        className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50"
+                {activeTaskDetailItem && (
+                    <div className="space-y-5">
+                        <div className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <span className="font-mono text-xs text-maison-primary">{activeTaskDetailItem.item_key}</span>
+                                        <Badge variant="neutral">{activeTaskDetailItem.product_type_name}</Badge>
+                                        <Badge variant={getStatusVariant(activeTaskDetailItem.status)}>
+                                            {getStatusLabel(activeTaskDetailItem.status)}
+                                        </Badge>
+                                        {activeTaskDetailItem.needs_qc_attention && <Badge variant="warning">Needs QC</Badge>}
+                                    </div>
+                                    <p className="mt-2 text-sm text-maison-secondary">
+                                        Ticket: {activeTaskDetailItem.ticket_number} | Customer: {activeTaskDetailItem.customer_name}
+                                    </p>
+                                </div>
+                                {!isTaskDetailAssignmentMode && canManageTaskDetailAssignments && (
+                                    <Button
+                                        size="sm"
+                                        onClick={() => openTaskDetailAssignmentForm(activeTaskDetailItem, '', 'create')}
                                     >
-                                        <span>{category.name}</span>
-                                    </button>
-                                )) : (
-                                    <div className="px-3 py-2 text-sm text-gray-500">No matching assigned categories found.</div>
+                                        Assign Task
+                                    </Button>
                                 )}
                             </div>
                         </div>
-                        <p className="text-sm text-gray-600">
-                            {activeAssignmentCategoryName
-                                ? `Remove this ${activeAssignmentCategoryName.toLowerCase()} assignment from the item?`
-                                : 'Select a category to remove its assignment from the item.'}
-                        </p>
-                        <div className="flex justify-end gap-2">
-                            <Button size="sm" variant="ghost" onClick={closeAssignmentDialog}>
-                                Cancel
-                            </Button>
-                            <Button
-                                size="sm"
-                                variant="danger"
-                                disabled={!assignmentForm.assignmentId || isArchivedAssignmentItem}
-                                onClick={() => handleDeleteAssignment(assignmentForm.assignmentId)}
-                            >
-                                Delete Task
-                            </Button>
-                        </div>
-                    </div>
-                ) : (
-                    <div className="space-y-4">
-                        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+
+                        {activeTaskDetailItem.status === 'ARCHIVED' && (
+                            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                                This item is archived. Production can review assignment history, but task assignment and edits are disabled.
+                            </div>
+                        )}
+
+                        {isTaskDetailAssignmentMode ? (
+                            renderAssignmentDialogContent({ embedded: true })
+                        ) : (
                             <div>
-                                <label className="mb-1.5 block text-sm font-medium text-maison-secondary">Category</label>
-                                <div className="space-y-2">
-                                    <input
-                                        type="text"
-                                        value={assignmentCategorySearch}
-                                        onChange={(e) => {
-                                            setAssignmentCategorySearch(e.target.value);
-                                            setActiveAssignmentDialog(prev => ({ ...prev, categoryName: '' }));
-                                            setAssignmentForm(prev => ({
-                                                ...prev,
-                                                assignmentId: '',
-                                                category_type_id: '',
-                                                task_type_id: '',
-                                                tailor_id: ''
-                                            }));
-                                            setAssignmentSearch('');
-                                        }}
-                                        placeholder="Type category name..."
-                                        disabled={isArchivedAssignmentItem}
-                                        className="block w-full rounded-lg border-gray-200 shadow-sm sm:text-sm py-2.5"
-                                    />
-                                    <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white">
-                                        {filteredAssignmentCategories.length > 0 ? filteredAssignmentCategories.map(category => (
-                                            <button
-                                                key={category.name}
-                                                type="button"
-                                                onClick={() => handleSelectAssignmentCategory(activeAssignmentItem, category.name)}
-                                                className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50"
-                                            >
-                                                <span>{category.name}</span>
-                                                {category.assignment && <span className="text-xs text-gray-500">Assigned</span>}
-                                            </button>
-                                        )) : (
-                                            <div className="px-3 py-2 text-sm text-gray-500">
-                                                {activeAssignmentDialog.mode === 'create'
-                                                    ? 'No categories available to assign.'
-                                                    : 'No matching assigned categories found.'}
-                                            </div>
-                                        )}
-                                    </div>
+                            <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                                <div>
+                                    <h4 className="font-serif text-lg font-medium text-maison-primary">Task Assignments</h4>
+                                    <p className="text-sm text-maison-secondary">Exact tasks currently attached to this product.</p>
                                 </div>
                             </div>
 
-                            <div>
-                                <label className="mb-1.5 block text-sm font-medium text-maison-secondary">Assignee</label>
-                                <div className="space-y-2">
-                                    <input
-                                        type="text"
-                                        value={assignmentSearch}
-                                        onChange={(e) => {
-                                            setAssignmentSearch(e.target.value);
-                                            setAssignmentForm(prev => ({ ...prev, tailor_id: '' }));
-                                        }}
-                                        placeholder={activeAssignmentCategoryName ? `Type ${activeAssignmentCategoryName.toLowerCase()} assignee name...` : 'Select category first...'}
-                                        disabled={!activeAssignmentCategoryName || isArchivedAssignmentItem}
-                                        className="block w-full rounded-lg border-gray-200 shadow-sm sm:text-sm py-2.5"
-                                    />
-                                    <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white">
-                                        {!activeAssignmentCategoryName ? (
-                                            <div className="px-3 py-2 text-sm text-gray-500">Select a category first.</div>
-                                        ) : filteredAssignmentTailors.length > 0 ? filteredAssignmentTailors.map(tailor => (
-                                            <button
-                                                key={tailor.id}
-                                                type="button"
-                                                onClick={() => {
-                                                    setAssignmentForm(prev => ({ ...prev, tailor_id: tailor.id }));
-                                                    setAssignmentSearch(tailor.name);
-                                                }}
-                                                className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50"
-                                            >
-                                                <span>{tailor.name}</span>
-                                                <span className="text-xs text-gray-500">Band {tailor.band || 'A'}</span>
-                                            </button>
-                                        )) : (
-                                            <div className="px-3 py-2 text-sm text-gray-500">No matching assignees found.</div>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div>
-                                <label className="mb-1.5 block text-sm font-medium text-maison-secondary">Task Type</label>
-                                <select
-                                    value={assignmentForm.task_type_id}
-                                    onChange={(e) => setAssignmentForm(prev => ({ ...prev, task_type_id: e.target.value }))}
-                                    disabled={!activeAssignmentCategoryName || isArchivedAssignmentItem}
-                                    className="block w-full rounded-lg border-gray-200 shadow-sm sm:text-sm py-2.5"
+                            {activeTaskDetailAssignments.length > 0 ? (
+                                <Table
+                                    tableClassName="table-fixed min-w-[1000px]"
+                                    headers={[
+                                        { label: 'Category', className: 'w-[12%]' },
+                                        { label: 'Task', className: 'w-[17%]' },
+                                        { label: 'Assignee', className: 'w-[17%]' },
+                                        { label: 'Status', className: 'w-[12%]' },
+                                        { label: 'Pay', className: 'w-[12%]' },
+                                        { label: 'Source', className: 'w-[13%]' },
+                                        { label: 'Actions', className: 'w-[17%]' },
+                                    ]}
                                 >
-                                    <option value="">{activeAssignmentCategoryName ? `Select ${activeAssignmentCategoryName} Task...` : 'Select Category First'}</option>
-                                    {activeAssignmentTaskOptions.map(task => (
-                                        <option key={task.id} value={task.id}>
-                                            {task.name}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-                        </div>
+                                    {activeTaskDetailAssignments.map((assignment) => {
+                                        const assignmentCategoryName = assignment.category_types?.name || 'Uncategorised';
+                                        const assignmentTaskName = assignment.task_types?.name || 'Unselected';
+                                        const assignmentTailorName = assignment.tailors?.name || 'Unassigned';
+                                        const assignmentPaySource = getAssignmentPaySource(assignment);
+                                        const canEditThisAssignment = canManageTaskDetailAssignments && assignment.status === 'CREATED';
 
-                        <div className="rounded-lg border border-gray-100 bg-white p-4 shadow-sm">
-                            <div className="mb-1 flex justify-between text-sm">
-                                <span className="text-gray-500">Category:</span>
-                                <span className="font-medium">{activeAssignmentCategoryName || '-'}</span>
-                            </div>
-                            <div className="mb-1 flex justify-between text-sm">
-                                <span className="text-gray-500">Pay Band:</span>
-                                <span className="font-medium">Band {assignmentTailorBand}</span>
-                            </div>
-                            <div className="mb-1 flex justify-between text-sm">
-                                <span className="text-gray-500">Base Rate:</span>
-                                <span className="font-medium">{formatMoney(baseAssignmentPay)}</span>
-                            </div>
-                            {selectedAssignmentSpecialPay && (
-                                <div className="mb-1 flex justify-between text-sm text-emerald-700">
-                                    <span>Special Fee:</span>
-                                    <span className="font-medium">{formatMoney(selectedAssignmentSpecialPay.special_fee)}</span>
+                                        return (
+                                            <TableRow key={assignment.id}>
+                                                <TableCell>
+                                                    <Badge
+                                                        variant="neutral"
+                                                        className={`${getCategoryBadgeClass(assignmentCategoryName)} max-w-full truncate`}
+                                                        title={assignmentCategoryName}
+                                                    >
+                                                        {assignmentCategoryName}
+                                                    </Badge>
+                                                </TableCell>
+                                                <TableCell className="max-w-0 font-medium">
+                                                    <span className="block truncate" title={assignmentTaskName}>{assignmentTaskName}</span>
+                                                </TableCell>
+                                                <TableCell className="max-w-0">
+                                                    <span className="block truncate" title={assignmentTailorName}>{assignmentTailorName}</span>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Badge variant={getAssignmentStatusVariant(assignment.status)}>
+                                                        {getAssignmentStatusLabel(assignment.status)}
+                                                    </Badge>
+                                                </TableCell>
+                                                <TableCell className="font-medium">{formatMoney(Number(assignment.pay_amount || 0))}</TableCell>
+                                                <TableCell>
+                                                    <div className="flex flex-col items-start gap-1">
+                                                        <Badge variant={getAssignmentPaySourceVariant(assignmentPaySource)}>
+                                                            {assignmentPaySource}
+                                                        </Badge>
+                                                        {assignment.price_review_requested && (
+                                                            <Badge
+                                                                variant="warning"
+                                                                title={assignment.price_review_reason || 'Price review requested'}
+                                                            >
+                                                                Needs Review
+                                                            </Badge>
+                                                        )}
+                                                    </div>
+                                                </TableCell>
+                                                <TableCell>
+                                                    {canEditThisAssignment ? (
+                                                        <div className="flex items-center gap-2">
+                                                            <Button
+                                                                size="sm"
+                                                                variant="secondary"
+                                                                onClick={() => openTaskDetailExistingAssignmentForm(activeTaskDetailItem, assignment, 'edit')}
+                                                            >
+                                                                Edit
+                                                            </Button>
+                                                            <div
+                                                                className="relative"
+                                                                onClick={(event) => event.stopPropagation()}
+                                                            >
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(event) => toggleTaskActionMenu(assignment.id, event)}
+                                                                    className="flex items-center gap-1 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-maison-primary shadow-sm transition-colors hover:bg-gray-50"
+                                                                >
+                                                                    More
+                                                                    <ChevronDown
+                                                                        size={13}
+                                                                        className={`text-gray-400 transition-transform ${activeTaskActionMenuId === assignment.id ? 'rotate-180' : ''}`}
+                                                                    />
+                                                                </button>
+                                                                {activeTaskActionMenuId === assignment.id && taskActionMenuPosition && createPortal(
+                                                                    <div
+                                                                        className="fixed z-[70] overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg"
+                                                                        style={{
+                                                                            top: taskActionMenuPosition.top,
+                                                                            left: taskActionMenuPosition.left,
+                                                                            width: taskActionMenuPosition.width,
+                                                                        }}
+                                                                        onClick={(event) => event.stopPropagation()}
+                                                                    >
+                                                                        {assignment.price_review_requested ? (
+                                                                            <button
+                                                                                type="button"
+                                                                                disabled
+                                                                                title={assignment.price_review_reason || 'Price review requested'}
+                                                                                className="block w-full cursor-not-allowed px-3 py-2 text-left text-xs text-amber-700 opacity-70"
+                                                                            >
+                                                                                Review Requested
+                                                                            </button>
+                                                                        ) : (
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => handleRequestPriceReview(assignment)}
+                                                                                className="block w-full px-3 py-2 text-left text-xs text-maison-secondary hover:bg-gray-50 hover:text-maison-primary"
+                                                                            >
+                                                                                Request Price Review
+                                                                            </button>
+                                                                        )}
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => openTaskDetailExistingAssignmentForm(activeTaskDetailItem, assignment, 'delete')}
+                                                                            className="block w-full px-3 py-2 text-left text-xs text-red-600 hover:bg-red-50"
+                                                                        >
+                                                                            Delete Task
+                                                                        </button>
+                                                                    </div>,
+                                                                    document.body
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-xs text-gray-400">
+                                                            {canManageProduction ? 'Locked' : '-'}
+                                                        </span>
+                                                    )}
+                                                </TableCell>
+                                            </TableRow>
+                                        );
+                                    })}
+                                </Table>
+                            ) : (
+                                <div className="rounded-lg border border-dashed border-gray-200 bg-white px-6 py-10 text-center">
+                                    <p className="text-sm font-medium text-maison-primary">No tasks assigned yet.</p>
+                                    <p className="mt-1 text-sm text-maison-secondary">
+                                        Assign the first production task when this item is ready.
+                                    </p>
                                 </div>
                             )}
-                            <div className="mt-2 flex justify-between border-t border-gray-100 pt-2 text-sm font-bold text-maison-primary">
-                                <span>Final Pay:</span>
-                                <span>{assignmentPay}</span>
                             </div>
-                        </div>
-                        <div className="flex justify-end gap-2">
-                            <Button size="sm" variant="ghost" onClick={closeAssignmentDialog}>
-                                Cancel
-                            </Button>
-                            <Button
-                                size="sm"
-                                disabled={!activeAssignmentCategoryName || isArchivedAssignmentItem}
-                                onClick={() => {
-                                    const item = items.find(entry => entry.id === activeAssignmentDialog.itemId);
-                                    if (!item) return;
-                                    if (activeAssignmentDialog.mode === 'edit') {
-                                        handleUpdateAssignment();
-                                    } else {
-                                        handleCreateAssignment(item);
-                                    }
-                                }}
-                            >
-                                {activeAssignmentDialog.mode === 'edit' ? 'Save' : 'Assign'}
-                            </Button>
-                        </div>
+                        )}
+
                     </div>
                 )}
+            </Modal>
+            <Modal
+                isOpen={Boolean(activeAssignmentDialog.itemId) && !activeTaskDetailItemId}
+                onClose={closeAssignmentDialog}
+                title={assignmentDialogTitle}
+                maxWidth="max-w-4xl"
+            >
+                {renderAssignmentDialogContent()}
             </Modal>
         </div>
     );

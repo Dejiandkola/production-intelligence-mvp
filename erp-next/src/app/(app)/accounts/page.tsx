@@ -10,10 +10,19 @@ import { db } from '@/services/db';
 import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
 import { Badge, Table, TableCell, TableRow } from '@/components/UI/Table';
+import { Modal } from '@/components/UI/Modal';
 import { formatMoney } from '@/lib/formatters';
 
 const TAILOR_PAGE_SIZE = 25;
 const SEARCH_DEBOUNCE_MS = 350;
+const ACCOUNT_FILTER_TABS = [
+    { key: 'all', label: 'All' },
+    { key: 'pending', label: 'Pending' },
+    { key: 'price-review', label: 'Price Review' },
+    { key: 'approved', label: 'Approved' },
+    { key: 'rejected', label: 'Rejected' },
+    { key: 'reversed', label: 'Reversed' },
+];
 
 export default function PendingVerification() {
     const router = useRouter();
@@ -26,6 +35,9 @@ export default function PendingVerification() {
     const [loadError, setLoadError] = useState('');
     const [filter, setFilter] = useState('pending');
     const [reversingTaskId, setReversingTaskId] = useState(null);
+    const [activeNegotiatedTask, setActiveNegotiatedTask] = useState(null);
+    const [negotiatedForm, setNegotiatedForm] = useState({ amount: '', note: '' });
+    const [savingNegotiatedTaskId, setSavingNegotiatedTaskId] = useState(null);
     const [expandedGroups, setExpandedGroups] = useState({});
     const [taskOptions, setTaskOptions] = useState([]);
     const [categoryOptions, setCategoryOptions] = useState([]);
@@ -248,6 +260,57 @@ export default function PendingVerification() {
         }
     };
 
+    const openNegotiatedPriceDialog = (task) => {
+        setActiveNegotiatedTask(task);
+        setNegotiatedForm({
+            amount: String(task.negotiated_pay_amount ?? task.pay_amount ?? ''),
+            note: task.negotiated_price_note || task.price_review_reason || '',
+        });
+    };
+
+    const closeNegotiatedPriceDialog = () => {
+        setActiveNegotiatedTask(null);
+        setNegotiatedForm({ amount: '', note: '' });
+    };
+
+    const handleSaveNegotiatedPrice = async () => {
+        if (!activeNegotiatedTask) return;
+
+        const amount = Number(negotiatedForm.amount);
+
+        if (!Number.isFinite(amount) || amount < 0) {
+            alert('Enter a valid negotiated price.');
+            return;
+        }
+
+        try {
+            setSavingNegotiatedTaskId(activeNegotiatedTask.id);
+            await db.setAssignmentNegotiatedPrice(activeNegotiatedTask.id, amount, negotiatedForm.note);
+            closeNegotiatedPriceDialog();
+            await loadTasks();
+        } catch (error) {
+            alert(error?.message || 'Failed to save negotiated price.');
+        } finally {
+            setSavingNegotiatedTaskId(null);
+        }
+    };
+
+    const handleClearNegotiatedPrice = async () => {
+        if (!activeNegotiatedTask) return;
+        if (!window.confirm('Clear this negotiated price and return the task to normal pricing?')) return;
+
+        try {
+            setSavingNegotiatedTaskId(activeNegotiatedTask.id);
+            await db.clearAssignmentNegotiatedPrice(activeNegotiatedTask.id);
+            closeNegotiatedPriceDialog();
+            await loadTasks();
+        } catch (error) {
+            alert(error?.message || 'Failed to clear negotiated price.');
+        } finally {
+            setSavingNegotiatedTaskId(null);
+        }
+    };
+
     const getStatusVariant = (status, isReversed) => {
         if (isReversed && status === 'CREATED') return 'warning';
         if (status === 'Approved' || status === 'PAID') return 'success';
@@ -270,6 +333,67 @@ export default function PendingVerification() {
         }
 
         return task.status;
+    };
+
+    const getTaskPaySourceLabel = (task) => {
+        if (
+            task.pay_source === 'NEGOTIATED_PRICE' ||
+            (task.negotiated_pay_amount !== null && task.negotiated_pay_amount !== undefined)
+        ) {
+            return 'Negotiated Price';
+        }
+
+        if (task.pay_source === 'SPECIAL_PAY') return 'Special Pay';
+        if (task.pay_source === 'RATE_CARD') return 'Rate Card';
+        if (task.rate_snapshot !== null && task.rate_snapshot !== undefined && Number(task.pay_amount || 0) !== Number(task.rate_snapshot || 0)) {
+            return 'Special Pay';
+        }
+
+        return 'Rate Card';
+    };
+
+    const getTaskPaySourceVariant = (source) => {
+        if (source === 'Negotiated Price') return 'warning';
+        if (source === 'Special Pay') return 'success';
+        return 'neutral';
+    };
+
+    const renderPayableCell = (task) => {
+        const paySource = getTaskPaySourceLabel(task);
+        const canReviewPrice = task.status === 'CREATED' || task.status === 'REVERSED';
+
+        return (
+            <div className="space-y-2">
+                <div className="font-medium">{formatMoney(task.pay_amount)}</div>
+                <div className="flex flex-wrap gap-1">
+                    <Badge variant={getTaskPaySourceVariant(paySource)}>
+                        {paySource}
+                    </Badge>
+                    {task.price_review_requested && (
+                        <Badge variant="warning" title={task.price_review_reason || 'Price review requested'}>
+                            Needs Review
+                        </Badge>
+                    )}
+                </div>
+                {task.price_review_reason && (
+                    <div
+                        className="max-w-[220px] truncate text-xs text-amber-700"
+                        title={task.price_review_reason}
+                    >
+                        {task.price_review_reason}
+                    </div>
+                )}
+                {canReviewPrice && (
+                    <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => openNegotiatedPriceDialog(task)}
+                    >
+                        {task.price_review_requested ? 'Review Price' : task.negotiated_pay_amount ? 'Edit Price' : 'Set Price'}
+                    </Button>
+                )}
+            </div>
+        );
     };
 
     const renderStatusCell = (task) => {
@@ -363,20 +487,20 @@ export default function PendingVerification() {
                 </div>
 
                 <div className="flex rounded-lg bg-gray-100 p-1">
-                    {['all', 'pending', 'approved', 'rejected', 'reversed'].map(tab => (
+                    {ACCOUNT_FILTER_TABS.map(tab => (
                         <button
-                            key={tab}
+                            key={tab.key}
                             onClick={() => {
                                 setPage(1);
-                                setFilter(tab);
+                                setFilter(tab.key);
                             }}
                             className={`rounded-md px-4 py-1.5 text-sm font-medium transition-all ${
-                                filter === tab
+                                filter === tab.key
                                     ? 'bg-white text-maison-primary shadow'
                                     : 'text-gray-500 hover:text-gray-700'
                             }`}
                         >
-                            {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                            {tab.label}
                         </button>
                     ))}
                 </div>
@@ -608,9 +732,7 @@ export default function PendingVerification() {
                                                     <div className="text-xs text-gray-500">{task.category_name}</div>
                                                 </TableCell>
                                                 <TableCell>{task.tailor_name || 'Unassigned'}</TableCell>
-                                                <TableCell className="font-medium">
-                                                    {formatMoney(task.pay_amount)}
-                                                </TableCell>
+                                                <TableCell>{renderPayableCell(task)}</TableCell>
                                                 <TableCell>{renderStatusCell(task)}</TableCell>
                                             </TableRow>
                                         ))}
@@ -629,6 +751,100 @@ export default function PendingVerification() {
                     </Card>
                 )}
             </div>
+
+            <Modal
+                isOpen={Boolean(activeNegotiatedTask)}
+                onClose={closeNegotiatedPriceDialog}
+                title="Negotiated Price"
+                maxWidth="max-w-2xl"
+            >
+                {activeNegotiatedTask && (
+                    <div className="space-y-5">
+                        <div className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-mono text-xs text-maison-primary">{activeNegotiatedTask.item_key}</span>
+                                <Badge variant="neutral">{activeNegotiatedTask.category_name || 'Uncategorised'}</Badge>
+                                <Badge variant={getTaskPaySourceVariant(getTaskPaySourceLabel(activeNegotiatedTask))}>
+                                    {getTaskPaySourceLabel(activeNegotiatedTask)}
+                                </Badge>
+                            </div>
+                            <p className="mt-2 text-sm text-maison-secondary">
+                                {activeNegotiatedTask.task_type_name} | {activeNegotiatedTask.tailor_name || 'Unassigned'} | {activeNegotiatedTask.customer_name}
+                            </p>
+                        </div>
+
+                        {activeNegotiatedTask.price_review_reason && (
+                            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                                <span className="font-medium">Production note: </span>
+                                {activeNegotiatedTask.price_review_reason}
+                            </div>
+                        )}
+
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <div className="rounded-lg border border-gray-100 bg-white p-4 shadow-sm">
+                                <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Current Payable</p>
+                                <p className="mt-2 text-lg font-medium text-maison-primary">{formatMoney(activeNegotiatedTask.pay_amount)}</p>
+                            </div>
+                            <div className="rounded-lg border border-gray-100 bg-white p-4 shadow-sm">
+                                <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Rate Card Snapshot</p>
+                                <p className="mt-2 text-lg font-medium text-maison-primary">{formatMoney(activeNegotiatedTask.rate_snapshot)}</p>
+                            </div>
+                        </div>
+
+                        <div className="space-y-4">
+                            <div>
+                                <label className="mb-1.5 block text-sm font-medium text-maison-secondary">
+                                    Negotiated Price
+                                </label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={negotiatedForm.amount}
+                                    onChange={(e) => setNegotiatedForm(prev => ({ ...prev, amount: e.target.value }))}
+                                    className="block w-full rounded-lg border-gray-200 shadow-sm sm:text-sm py-2.5"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="mb-1.5 block text-sm font-medium text-maison-secondary">
+                                    Note
+                                </label>
+                                <textarea
+                                    rows={3}
+                                    value={negotiatedForm.note}
+                                    onChange={(e) => setNegotiatedForm(prev => ({ ...prev, note: e.target.value }))}
+                                    placeholder="Reason for negotiated price"
+                                    className="block w-full rounded-lg border border-gray-200 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-maison-primary/20"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="flex flex-wrap justify-end gap-2">
+                            {activeNegotiatedTask.negotiated_pay_amount !== null && activeNegotiatedTask.negotiated_pay_amount !== undefined && (
+                                <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    isLoading={savingNegotiatedTaskId === activeNegotiatedTask.id}
+                                    onClick={handleClearNegotiatedPrice}
+                                >
+                                    Use Normal Price
+                                </Button>
+                            )}
+                            <Button size="sm" variant="ghost" onClick={closeNegotiatedPriceDialog}>
+                                Cancel
+                            </Button>
+                            <Button
+                                size="sm"
+                                isLoading={savingNegotiatedTaskId === activeNegotiatedTask.id}
+                                onClick={handleSaveNegotiatedPrice}
+                            >
+                                Save Negotiated Price
+                            </Button>
+                        </div>
+                    </div>
+                )}
+            </Modal>
         </div>
     );
 }

@@ -1,7 +1,7 @@
 import React from 'react';
 import clsx from 'clsx';
 
-export function Badge({ children, variant = 'neutral', className }) {
+export function Badge({ children, variant = 'neutral', className, ...props }) {
     const variants = {
         neutral: 'bg-gray-100 text-gray-700',
         success: 'bg-emerald-50 text-emerald-700',
@@ -11,27 +11,40 @@ export function Badge({ children, variant = 'neutral', className }) {
     };
 
     return (
-        <span className={clsx("inline-flex items-center px-2 py-0.5 rounded text-xs font-medium", variants[variant], className)}>
+        <span
+            className={clsx("inline-flex items-center px-2 py-0.5 rounded text-xs font-medium", variants[variant], className)}
+            {...props}
+        >
             {children}
         </span>
     );
 }
 
-export function Table({ headers, children, className }) {
+export function Table({ headers, children, className, tableClassName }) {
     return (
         <div className={clsx("overflow-x-auto rounded-lg border border-gray-200", className)}>
-            <table className="min-w-full divide-y divide-gray-200">
+            <table className={clsx("min-w-full divide-y divide-gray-200", tableClassName)}>
                 <thead className="bg-gray-50/50">
                     <tr>
-                        {headers.map((header, idx) => (
-                            <th
-                                key={idx}
-                                scope="col"
-                                className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                            >
-                                {header}
-                            </th>
-                        ))}
+                        {headers.map((header, idx) => {
+                            const headerConfig =
+                                header && typeof header === 'object' && 'label' in header
+                                    ? header
+                                    : { label: header };
+
+                            return (
+                                <th
+                                    key={idx}
+                                    scope="col"
+                                    className={clsx(
+                                        "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
+                                        headerConfig.className
+                                    )}
+                                >
+                                    {headerConfig.label}
+                                </th>
+                            );
+                        })}
                     </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
