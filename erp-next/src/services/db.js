@@ -511,7 +511,7 @@ export const db = {
 
         if (error) {
             if (isMissingTailorPortalSchemaError(error)) {
-                throw new Error('Tailor portal is not ready yet. Apply migration 020_tailor_portal_pin_access.sql, then refresh the app.')
+                throw new Error('Tailor portal is not ready yet. Apply migration 021_tailor_portal_pin_access.sql, then refresh the app.')
             }
 
             throw new Error(error.message)
@@ -530,7 +530,7 @@ export const db = {
 
         if (error) {
             if (isMissingTailorPortalSchemaError(error)) {
-                throw new Error('Tailor portal is not ready yet. Apply migration 020_tailor_portal_pin_access.sql, then refresh the app.')
+                throw new Error('Tailor portal is not ready yet. Apply migration 021_tailor_portal_pin_access.sql, then refresh the app.')
             }
 
             throw new Error(error.message)
@@ -554,7 +554,7 @@ export const db = {
 
         if (error) {
             if (isMissingTailorPortalSchemaError(error)) {
-                throw new Error('Tailor portal is not ready yet. Apply migration 020_tailor_portal_pin_access.sql, then refresh the app.')
+                throw new Error('Tailor portal is not ready yet. Apply migration 021_tailor_portal_pin_access.sql, then refresh the app.')
             }
 
             throw new Error(error.message)

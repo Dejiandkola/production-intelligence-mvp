@@ -1,4 +1,4 @@
--- Migration 020: Read-only tailor work and pay portal.
+-- Migration 021: Read-only tailor work and pay portal.
 --
 -- Tailors authenticate with a private link token and a six-digit PIN. Plaintext
 -- credentials are returned once when generated and are never stored.
@@ -33,8 +33,8 @@ CREATE TABLE IF NOT EXISTS public.tailor_portal_sessions (
 CREATE INDEX IF NOT EXISTS tailor_portal_sessions_access_id_idx
 ON public.tailor_portal_sessions (access_id);
 
-CREATE INDEX IF NOT EXISTS work_assignments_tailor_updated_at_idx
-ON public.work_assignments (tailor_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS work_assignments_tailor_created_at_idx
+ON public.work_assignments (tailor_id, created_at DESC);
 
 ALTER TABLE public.tailor_portal_access ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.tailor_portal_sessions ENABLE ROW LEVEL SECURITY;
@@ -334,8 +334,8 @@ BEGIN
     SELECT wa.*
     FROM public.work_assignments wa
     WHERE wa.tailor_id = v_tailor_id
-      AND (p_start_date IS NULL OR wa.updated_at >= p_start_date::timestamptz)
-      AND (p_end_date IS NULL OR wa.updated_at < (p_end_date + 1)::timestamptz)
+      AND (p_start_date IS NULL OR wa.created_at >= p_start_date::timestamptz)
+      AND (p_end_date IS NULL OR wa.created_at < (p_end_date + 1)::timestamptz)
   ),
   filtered_work AS (
     SELECT pw.*
@@ -368,14 +368,14 @@ BEGIN
         'category_name', ct.name,
         'status', fw.status,
         'pay_amount', fw.pay_amount,
-        'updated_at', fw.updated_at
+        'assigned_at', fw.created_at
       )
-      ORDER BY fw.updated_at DESC, fw.id DESC
+      ORDER BY fw.created_at DESC, fw.id DESC
     ) AS rows
     FROM (
       SELECT *
       FROM filtered_work
-      ORDER BY updated_at DESC, id DESC
+      ORDER BY created_at DESC, id DESC
       LIMIT LEAST(GREATEST(p_page_size, 1), 100)
       OFFSET GREATEST(p_page - 1, 0) * LEAST(GREATEST(p_page_size, 1), 100)
     ) fw

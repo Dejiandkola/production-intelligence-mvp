@@ -18,6 +18,28 @@ const STATUS_OPTIONS = [
   { value: 'rejected', label: 'Rejected' },
 ]
 
+function formatDateInput(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function getCurrentWorkWeek() {
+  const today = new Date()
+  const monday = new Date(today)
+  monday.setHours(0, 0, 0, 0)
+  monday.setDate(today.getDate() - ((today.getDay() + 6) % 7))
+
+  const saturday = new Date(monday)
+  saturday.setDate(monday.getDate() + 5)
+
+  return {
+    startDate: formatDateInput(monday),
+    endDate: formatDateInput(saturday),
+  }
+}
+
 function statusDetails(status: string) {
   const details = {
     CREATED: { label: 'Assigned', className: 'bg-gray-100 text-gray-700' },
@@ -47,6 +69,7 @@ function SummaryCard({ icon: Icon, label, value, helper }: { icon: React.Element
 
 export default function TailorPortalClient({ accessToken }: { accessToken: string }) {
   const storageKey = useMemo(() => `tailor-portal-session:${accessToken}`, [accessToken])
+  const defaultDateRange = useMemo(() => getCurrentWorkWeek(), [])
   const [initialized, setInitialized] = useState(false)
   const [sessionToken, setSessionToken] = useState('')
   const [pin, setPin] = useState('')
@@ -55,8 +78,8 @@ export default function TailorPortalClient({ accessToken }: { accessToken: strin
   const [error, setError] = useState('')
   const [portalData, setPortalData] = useState(null)
   const [status, setStatus] = useState('all')
-  const [startDate, setStartDate] = useState('')
-  const [endDate, setEndDate] = useState('')
+  const [startDate, setStartDate] = useState(defaultDateRange.startDate)
+  const [endDate, setEndDate] = useState(defaultDateRange.endDate)
   const [page, setPage] = useState(1)
 
   useEffect(() => {
@@ -306,7 +329,7 @@ export default function TailorPortalClient({ accessToken }: { accessToken: strin
                     <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-maison-secondary">
                       <span>{entry.category_name || 'Uncategorized'}</span>
                       <span>Reference: {entry.item_reference || 'Not available'}</span>
-                      <span>{entry.updated_at ? new Date(entry.updated_at).toLocaleDateString() : 'Date unavailable'}</span>
+                      <span>{entry.assigned_at ? new Date(entry.assigned_at).toLocaleDateString() : 'Date unavailable'}</span>
                     </div>
                   </div>
                   <div className="text-left sm:text-right">
