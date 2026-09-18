@@ -313,23 +313,40 @@ export default function TailorPortalClient({ accessToken }: { accessToken: strin
             const entryStatus = statusDetails(entry.status)
             return (
               <article key={entry.id} className="rounded-lg border border-gray-100 bg-white p-4 shadow-sm sm:p-5">
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 items-start justify-between gap-3">
+                  <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+                    <h2 className="break-words text-base font-semibold text-maison-primary">
+                      {entry.customer_name || 'Customer unavailable'}
+                    </h2>
+                    <span className="break-all text-xs text-gray-500">
+                      {entry.ticket_number || entry.item_reference || 'Ticket unavailable'}
+                    </span>
+                  </div>
+                  <span className={`shrink-0 rounded px-2 py-0.5 text-xs font-medium ${entryStatus.className}`}>{entryStatus.label}</span>
+                </div>
+
+                <div className="mt-3 grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-6">
                   <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="font-medium text-maison-primary">{entry.task_name || 'Production task'}</h2>
-                      <span className={`rounded px-2 py-0.5 text-xs font-medium ${entryStatus.className}`}>{entryStatus.label}</span>
+                    <div className="break-words text-sm font-medium text-maison-primary">
+                      {entry.product_name || 'Product unavailable'}
                     </div>
-                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-maison-secondary">
+
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-maison-secondary">
                       <span>{entry.category_name || 'Uncategorized'}</span>
-                      <span>Reference: {entry.item_reference || 'Not available'}</span>
+                      <span aria-hidden="true" className="text-gray-300">/</span>
+                      <span>{entry.task_name || 'Production task'}</span>
+                      <span aria-hidden="true" className="text-gray-300">/</span>
                       <span>Assigned: {entry.assigned_at ? new Date(entry.assigned_at).toLocaleDateString() : 'Date unavailable'}</span>
                     </div>
                   </div>
-                  <div className="text-left sm:text-right">
-                    <div className="text-lg font-medium text-maison-primary">
-                      {formatMoney(entry.pay_amount, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+
+                  <div className="flex items-end justify-between gap-4 border-t border-gray-100 pt-3 sm:block sm:border-0 sm:pt-0 sm:text-right">
+                    <div>
+                      <div className="whitespace-nowrap text-lg font-medium text-maison-primary">
+                        {formatMoney(entry.pay_amount, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                      </div>
+                      <div className="mt-0.5 text-xs text-gray-500">Payment amount</div>
                     </div>
-                    <div className="mt-0.5 text-xs text-gray-500">Payment amount</div>
                   </div>
                 </div>
               </article>

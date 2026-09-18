@@ -361,6 +361,9 @@ BEGIN
       jsonb_build_object(
         'id', fw.id,
         'item_reference', i.item_key,
+        'customer_name', tk.customer_name,
+        'ticket_number', tk.ticket_number,
+        'product_name', pt.name,
         'task_name', tt.name,
         'category_name', ct.name,
         'status', fw.status,
@@ -377,6 +380,8 @@ BEGIN
       OFFSET GREATEST(p_page - 1, 0) * LEAST(GREATEST(p_page_size, 1), 100)
     ) fw
     LEFT JOIN public.items i ON i.id = fw.item_id
+    LEFT JOIN public.tickets tk ON tk.id = i.ticket_id
+    LEFT JOIN public.product_types pt ON pt.id = i.product_type_id
     LEFT JOIN public.task_types tt ON tt.id = fw.task_type_id
     LEFT JOIN public.category_types ct ON ct.id = fw.category_type_id
   )
