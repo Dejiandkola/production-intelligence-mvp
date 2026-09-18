@@ -2,7 +2,7 @@
 // @ts-nocheck
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
 import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
@@ -11,7 +11,7 @@ import { Modal } from '@/components/UI/Modal';
 import { Input } from '@/components/UI/Input';
 import { CSVImporter } from '@/components/Shared/CSVImporter';
 import { formatMoney } from '@/lib/formatters';
-import { Check, Copy, Edit2, KeyRound, Plus, Power, PowerOff, ShieldOff, Trash2 } from 'lucide-react';
+import { Check, Copy, Edit2, KeyRound, Plus, Power, PowerOff, Search, ShieldOff, Trash2, X } from 'lucide-react';
 
 const DEPARTMENTS = ['PANT', 'SHIRT', 'SUIT', 'KAFTAN', 'ACCESSORIES', 'DESIGN', 'CUTTER', 'OTHER'];
 export default function ManageTailors({ canManageTailors }: { canManageTailors: boolean }) {
@@ -21,6 +21,8 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
     const [rateCards, setRateCards] = useState([]);
     const [specialPayRules, setSpecialPayRules] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [canManage, setCanManage] = useState(canManageTailors);
+    const [tailorSearch, setTailorSearch] = useState('');
 
     const [isTailorModalOpen, setIsTailorModalOpen] = useState(false);
     const [editingTailor, setEditingTailor] = useState(null);
@@ -45,6 +47,22 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
 
     useEffect(() => {
         loadData();
+    }, []);
+
+    useEffect(() => {
+        let active = true;
+
+        db.getMyPermissions()
+            .then((permissions) => {
+                if (active && permissions.includes('manage_tailors')) setCanManage(true);
+            })
+            .catch(() => {
+                // Keep the server-derived permission when the client check is unavailable.
+            });
+
+        return () => {
+            active = false;
+        };
     }, []);
 
     const loadData = async () => {
@@ -169,7 +187,7 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
     };
 
     const handleOpenPortalModal = async (tailor) => {
-        if (!canManageTailors) return;
+        if (!canManage) return;
 
         setActivePortalTailor(tailor);
         setPortalStatus(null);
@@ -199,7 +217,7 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
     };
 
     const handleGeneratePortalAccess = async () => {
-        if (!canManageTailors || !activePortalTailor) return;
+        if (!canManage || !activePortalTailor) return;
 
         if (portalStatus?.exists && portalStatus?.is_active) {
             const confirmed = window.confirm('Generate a new link and PIN? The current link and all active sessions will stop working.');
@@ -231,7 +249,7 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
     };
 
     const handleDisablePortalAccess = async () => {
-        if (!canManageTailors || !activePortalTailor) return;
+        if (!canManage || !activePortalTailor) return;
         if (!window.confirm(`Disable portal access for ${activePortalTailor.name}? Their link and active sessions will stop working.`)) return;
 
         setPortalLoading(true);
@@ -260,7 +278,7 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
 
     const handleSaveSpecialPay = async (event) => {
         event.preventDefault();
-        if (!canManageTailors || !activeSpecialPayTailor) return;
+        if (!canManage || !activeSpecialPayTailor) return;
 
         try {
             await db.saveTailorSpecialPay(
@@ -277,7 +295,7 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
     };
 
     const handleDeleteSpecialPay = async (rule) => {
-        if (!canManageTailors) return;
+        if (!canManage) return;
         if (!window.confirm(`Remove special fee for ${rule.task_type_name || 'this task'}?`)) return;
 
         try {
@@ -291,7 +309,7 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
 
     const handleSaveTailor = async (e) => {
         e.preventDefault();
-        if (!canManageTailors) {
+        if (!canManage) {
             alert("Master Data writes are read-only for your role.");
             return;
         }
@@ -309,7 +327,7 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
     };
 
     const handleToggleStatus = async (tailor) => {
-        if (!canManageTailors) {
+        if (!canManage) {
             alert("Master Data writes are read-only for your role.");
             return;
         }
@@ -327,7 +345,7 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
     };
 
     const handleDeleteTailor = async (tailor) => {
-        if (!canManageTailors) {
+        if (!canManage) {
             alert("Master Data writes are read-only for your role.");
             return;
         }
@@ -355,6 +373,15 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
     const filteredSpecialPayTasks = selectedSpecialPayTasks.filter(task =>
         !taskSearch || (task.name || '').toLowerCase().includes(taskSearch)
     );
+    const filteredTailors = useMemo(() => {
+        const query = tailorSearch.trim().toLowerCase();
+        if (!query) return tailors;
+
+        return tailors.filter(tailor =>
+            [tailor.name, tailor.department]
+                .some(value => String(value || '').toLowerCase().includes(query))
+        );
+    }, [tailorSearch, tailors]);
 
     return (
         <div className="space-y-6">
@@ -364,10 +391,10 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
                     <p className="text-sm text-maison-secondary">Manage atelier staff, departments, pay bands, and special task fees</p>
                 </div>
                 <div className="flex gap-3">
-                    {canManageTailors && (
+                    {canManage && (
                         <CSVImporter
                             onImport={async (data) => {
-                                if (!canManageTailors) {
+                                if (!canManage) {
                                     alert("Tailor writes are read-only for your role.");
                                     return;
                                 }
@@ -446,16 +473,42 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
                             }}
                         />
                     )}
-                    <Button onClick={() => handleOpenTailorModal()} disabled={!canManageTailors}>
+                    <Button onClick={() => handleOpenTailorModal()} disabled={!canManage}>
                         <Plus size={16} className="mr-2" />
                         Add Tailor
                     </Button>
                 </div>
             </div>
 
+            <div className="relative max-w-md">
+                <Search
+                    size={18}
+                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+                    aria-hidden="true"
+                />
+                <input
+                    type="text"
+                    value={tailorSearch}
+                    onChange={(event) => setTailorSearch(event.target.value)}
+                    placeholder="Search by name or department"
+                    aria-label="Search tailors"
+                    className="block w-full rounded-lg border border-gray-200 bg-white py-2.5 pl-10 pr-10 text-sm text-maison-primary shadow-sm outline-none focus:border-maison-accent focus:ring-2 focus:ring-maison-accent/20"
+                />
+                {tailorSearch && (
+                    <button
+                        type="button"
+                        onClick={() => setTailorSearch('')}
+                        className="absolute right-1.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md text-gray-400 hover:bg-gray-50 hover:text-maison-primary"
+                        aria-label="Clear tailor search"
+                    >
+                        <X size={16} aria-hidden="true" />
+                    </button>
+                )}
+            </div>
+
             <Card padding="p-0">
                 <Table headers={['Name', 'Department', 'Band', 'Special Pay', 'Status', 'Actions']}>
-                    {tailors.map((tailor) => {
+                    {filteredTailors.map((tailor) => {
                         const rules = getTailorSpecialPayRules(tailor.id);
                         return (
                             <TableRow key={tailor.id}>
@@ -485,40 +538,40 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
                                         <button
                                             title="Special Pay"
                                             onClick={() => handleOpenSpecialPayModal(tailor)}
-                                            disabled={!canManageTailors}
-                                            className={`p-1 transition-colors ${!canManageTailors ? 'text-gray-300 cursor-not-allowed' : 'text-gray-400 hover:text-maison-primary'}`}
+                                            disabled={!canManage}
+                                            className={`p-1 transition-colors ${!canManage ? 'text-gray-300 cursor-not-allowed' : 'text-gray-400 hover:text-maison-primary'}`}
                                         >
                                             <Plus size={16} />
                                         </button>
                                         <button
                                             title="Manage Tailor Access"
                                             onClick={() => handleOpenPortalModal(tailor)}
-                                            disabled={!canManageTailors}
-                                            className={`p-1 transition-colors ${!canManageTailors ? 'text-gray-300 cursor-not-allowed' : 'text-gray-400 hover:text-maison-primary'}`}
+                                            disabled={!canManage}
+                                            className={`p-1 transition-colors ${!canManage ? 'text-gray-300 cursor-not-allowed' : 'text-gray-400 hover:text-maison-primary'}`}
                                         >
                                             <KeyRound size={16} />
                                         </button>
                                         <button
                                             title={tailor.active ? "Deactivate Tailor" : "Activate Tailor"}
                                             onClick={() => handleToggleStatus(tailor)}
-                                            disabled={!canManageTailors}
-                                            className={`p-1 transition-colors ${!canManageTailors ? 'text-gray-300 cursor-not-allowed' : tailor.active ? 'text-gray-400 hover:text-red-500' : 'text-red-400 hover:text-green-500'}`}
+                                            disabled={!canManage}
+                                            className={`p-1 transition-colors ${!canManage ? 'text-gray-300 cursor-not-allowed' : tailor.active ? 'text-gray-400 hover:text-red-500' : 'text-red-400 hover:text-green-500'}`}
                                         >
                                             {tailor.active ? <PowerOff size={16} /> : <Power size={16} />}
                                         </button>
                                         <button
                                             title="Edit Tailor"
                                             onClick={() => handleOpenTailorModal(tailor)}
-                                            disabled={!canManageTailors}
-                                            className={`p-1 transition-colors ${!canManageTailors ? 'text-gray-300 cursor-not-allowed' : 'text-gray-400 hover:text-maison-primary'}`}
+                                            disabled={!canManage}
+                                            className={`p-1 transition-colors ${!canManage ? 'text-gray-300 cursor-not-allowed' : 'text-gray-400 hover:text-maison-primary'}`}
                                         >
                                             <Edit2 size={16} />
                                         </button>
                                         <button
                                             title="Delete Tailor"
                                             onClick={() => handleDeleteTailor(tailor)}
-                                            disabled={!canManageTailors}
-                                            className={`p-1 transition-colors ${!canManageTailors ? 'text-gray-300 cursor-not-allowed' : 'text-red-400 hover:text-red-600'}`}
+                                            disabled={!canManage}
+                                            className={`p-1 transition-colors ${!canManage ? 'text-gray-300 cursor-not-allowed' : 'text-red-400 hover:text-red-600'}`}
                                         >
                                             <Trash2 size={16} />
                                         </button>
@@ -527,10 +580,10 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
                             </TableRow>
                         );
                     })}
-                    {tailors.length === 0 && !loading && (
+                    {filteredTailors.length === 0 && !loading && (
                         <tr>
                             <td colSpan="6" className="px-6 py-8 text-center text-gray-500 text-sm">
-                                No tailors found.
+                                {tailorSearch.trim() ? 'No tailors match your search.' : 'No tailors found.'}
                             </td>
                         </tr>
                     )}
@@ -692,7 +745,7 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
                         <Button type="button" variant="ghost" onClick={() => setIsTailorModalOpen(false)}>
                             Cancel
                         </Button>
-                        <Button type="submit" disabled={!canManageTailors}>
+                        <Button type="submit" disabled={!canManage}>
                             {editingTailor ? 'Update Tailor' : 'Create Tailor'}
                         </Button>
                     </div>
@@ -830,7 +883,7 @@ export default function ManageTailors({ canManageTailors }: { canManageTailors: 
                                     Cancel Edit
                                 </Button>
                             )}
-                            <Button type="submit" disabled={!canManageTailors || !specialPayForm.category_type_id || !specialPayForm.task_type_id || selectedSpecialPayTasks.length === 0}>
+                            <Button type="submit" disabled={!canManage || !specialPayForm.category_type_id || !specialPayForm.task_type_id || selectedSpecialPayTasks.length === 0}>
                                 {editingSpecialPayRule ? 'Update Special Fee' : 'Add Special Fee'}
                             </Button>
                         </div>

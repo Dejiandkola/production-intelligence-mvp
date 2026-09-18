@@ -4,7 +4,7 @@
 
 import Image from 'next/image'
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
-import { Banknote, BriefcaseBusiness, CheckCircle2, ChevronLeft, ChevronRight, LockKeyhole, LogOut } from 'lucide-react'
+import { Banknote, BriefcaseBusiness, ChevronLeft, ChevronRight, LockKeyhole, LogOut } from 'lucide-react'
 import { db } from '@/services/db'
 import { formatMoney } from '@/lib/formatters'
 
@@ -12,10 +12,8 @@ const PAGE_SIZE = 25
 
 const STATUS_OPTIONS = [
   { value: 'all', label: 'All' },
-  { value: 'assigned', label: 'Assigned' },
-  { value: 'approved', label: 'Approved' },
   { value: 'paid', label: 'Paid' },
-  { value: 'rejected', label: 'Rejected' },
+  { value: 'not_paid', label: 'Not Paid' },
 ]
 
 function formatDateInput(date: Date) {
@@ -42,11 +40,9 @@ function getCurrentWorkWeek() {
 
 function statusDetails(status: string) {
   const details = {
-    CREATED: { label: 'Assigned', className: 'bg-gray-100 text-gray-700' },
-    QC_PASSED: { label: 'Approved', className: 'bg-emerald-50 text-emerald-700' },
-    PAID: { label: 'Paid', className: 'bg-blue-50 text-blue-700' },
-    QC_FAILED: { label: 'Rejected', className: 'bg-red-50 text-red-700' },
-    REVERSED: { label: 'Reversed', className: 'bg-amber-50 text-amber-700' },
+    CREATED: { label: 'Not Paid', className: 'bg-amber-50 text-amber-700' },
+    QC_PASSED: { label: 'Paid', className: 'bg-emerald-50 text-emerald-700' },
+    PAID: { label: 'Paid', className: 'bg-emerald-50 text-emerald-700' },
   }
 
   return details[status] || { label: status || 'Unknown', className: 'bg-gray-100 text-gray-700' }
@@ -253,26 +249,23 @@ export default function TailorPortalClient({ accessToken }: { accessToken: strin
           <div className="mt-5 rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
         )}
 
-        <section className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <section className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <SummaryCard
             icon={Banknote}
-            label="Total Earned"
-            value={formatMoney(summary.earned_total, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-            helper="Approved and paid work"
-          />
-          <SummaryCard
-            icon={CheckCircle2}
-            label="Approved"
-            value={formatMoney(summary.approved_total, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-            helper="Approved, awaiting payment"
+            label="Paid Amount"
+            value={formatMoney(summary.paid_amount, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+            helper="Approved by Accounts"
           />
           <SummaryCard
             icon={BriefcaseBusiness}
-            label="Paid"
-            value={formatMoney(summary.paid_total, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-            helper="Recorded as paid"
+            label="Not Paid Amount"
+            value={formatMoney(summary.not_paid_amount, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+            helper="Still awaiting approval"
           />
         </section>
+        <div className="mt-3 text-right text-sm text-maison-secondary">
+          Expected for selected week: <span className="font-medium text-maison-primary">{formatMoney(summary.expected_amount, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+        </div>
 
         <section className="mt-6 rounded-lg border border-gray-100 bg-white p-4 shadow-sm">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -329,7 +322,7 @@ export default function TailorPortalClient({ accessToken }: { accessToken: strin
                     <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-maison-secondary">
                       <span>{entry.category_name || 'Uncategorized'}</span>
                       <span>Reference: {entry.item_reference || 'Not available'}</span>
-                      <span>{entry.assigned_at ? new Date(entry.assigned_at).toLocaleDateString() : 'Date unavailable'}</span>
+                      <span>Assigned: {entry.assigned_at ? new Date(entry.assigned_at).toLocaleDateString() : 'Date unavailable'}</span>
                     </div>
                   </div>
                   <div className="text-left sm:text-right">

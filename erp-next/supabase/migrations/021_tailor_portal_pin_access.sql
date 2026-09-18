@@ -340,20 +340,17 @@ BEGIN
   filtered_work AS (
     SELECT pw.*
     FROM period_work pw
-    WHERE COALESCE(p_status, 'all') = 'all'
-      OR (p_status = 'assigned' AND pw.status::text = 'CREATED')
-      OR (p_status = 'approved' AND pw.status::text = 'QC_PASSED')
-      OR (p_status = 'paid' AND pw.status::text = 'PAID')
-      OR (p_status = 'rejected' AND pw.status::text = 'QC_FAILED')
-      OR (p_status = 'reversed' AND pw.status::text = 'REVERSED')
+    WHERE pw.status::text IN ('CREATED', 'QC_PASSED', 'PAID')
+      AND (
+        COALESCE(p_status, 'all') = 'all'
+        OR (p_status = 'not_paid' AND pw.status::text = 'CREATED')
+        OR (p_status = 'paid' AND pw.status::text IN ('QC_PASSED', 'PAID'))
+      )
   ),
   totals AS (
     SELECT
-      COALESCE(SUM(pay_amount) FILTER (WHERE status::text IN ('QC_PASSED', 'PAID')), 0) AS earned_total,
-      COALESCE(SUM(pay_amount) FILTER (WHERE status::text = 'QC_PASSED'), 0) AS approved_total,
-      COALESCE(SUM(pay_amount) FILTER (WHERE status::text = 'PAID'), 0) AS paid_total,
-      COUNT(*) FILTER (WHERE status::text = 'CREATED') AS assigned_count,
-      COUNT(*) FILTER (WHERE status::text = 'QC_FAILED') AS rejected_count
+      COALESCE(SUM(pay_amount) FILTER (WHERE status::text IN ('QC_PASSED', 'PAID')), 0) AS paid_amount,
+      COALESCE(SUM(pay_amount) FILTER (WHERE status::text = 'CREATED'), 0) AS not_paid_amount
     FROM period_work
   ),
   counted AS (
@@ -386,11 +383,9 @@ BEGIN
   SELECT jsonb_build_object(
     'tailor', jsonb_build_object('name', v_tailor_name, 'department', v_department),
     'summary', jsonb_build_object(
-      'earned_total', totals.earned_total,
-      'approved_total', totals.approved_total,
-      'paid_total', totals.paid_total,
-      'assigned_count', totals.assigned_count,
-      'rejected_count', totals.rejected_count
+      'paid_amount', totals.paid_amount,
+      'not_paid_amount', totals.not_paid_amount,
+      'expected_amount', totals.paid_amount + totals.not_paid_amount
     ),
     'entries', COALESCE(entries.rows, '[]'::jsonb),
     'total_count', counted.total_count,
