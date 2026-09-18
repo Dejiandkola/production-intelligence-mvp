@@ -2705,6 +2705,112 @@ async updateTicket(id, { customer_name }) {
         }
     },
 
+    async getQcTailorWork(filters = {}) {
+        const ctx = await getContext()
+
+        if (!ctx.permissions.includes('manage_qc') && !ctx.permissions.includes('admin')) {
+            throw new PermissionDeniedError('Requires manage_qc permission')
+        }
+
+        const rows = []
+        let from = 0
+
+        while (true) {
+            let query = supabase
+                .from('work_assignments')
+                .select(`
+                    id,
+                    status,
+                    created_at,
+                    updated_at,
+                    task_types(name),
+                    tailors(id, name),
+                    category_types(name),
+                    items(
+                        id,
+                        item_key,
+                        status,
+                        created_at,
+                        product_types(name),
+                        tickets(customer_name, ticket_number)
+                    )
+                `)
+                .eq('organization_id', ctx.organizationId)
+                .order('created_at', { ascending: false })
+                .order('id', { ascending: false })
+                .range(from, from + QUERY_PAGE_SIZE - 1)
+
+            if (filters.dateFrom) {
+                query = query.gte('created_at', toDateBoundary(filters.dateFrom, 'start'))
+            }
+
+            if (filters.dateTo) {
+                query = query.lte('created_at', toDateBoundary(filters.dateTo, 'end'))
+            }
+
+            if (filters.status) {
+                query = query.eq('status', filters.status)
+            }
+
+            const { data, error } = await query
+
+            if (error) {
+                console.error(error)
+                throw new Error(error.message)
+            }
+
+            rows.push(...(data || []))
+
+            if (!data || data.length < QUERY_PAGE_SIZE) break
+            from += QUERY_PAGE_SIZE
+        }
+
+        const searchCustomer = String(filters.searchCustomer || '').trim().toLowerCase()
+        const searchTicket = String(filters.searchTicket || '').trim().toLowerCase()
+        const searchTailor = String(filters.searchTailor || '').trim().toLowerCase()
+        const searchTask = String(filters.searchTask || '').trim().toLowerCase()
+        const searchCategory = String(filters.searchCategory || '').trim().toLowerCase()
+        const searchProduct = String(filters.searchProduct || '').trim().toLowerCase()
+
+        const uniqueRows = Array.from(
+            new Map(rows.map(row => [row.id, row])).values()
+        )
+
+        return uniqueRows
+            .map(row => ({
+                id: row.id,
+                raw_status: row.status,
+                status: normalizeAssignmentStatus(row.status),
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+                tailor_id: row.tailors?.id,
+                tailor_name: row.tailors?.name,
+                task_type_name: row.task_types?.name,
+                task_name: row.task_types?.name,
+                category_name: row.category_types?.name,
+                item_id: row.items?.id,
+                item_key: row.items?.item_key,
+                item_status: normalizeItemStatus(row.items?.status),
+                item_created_at: row.items?.created_at,
+                product_type_name: row.items?.product_types?.name,
+                customer_name: row.items?.tickets?.customer_name,
+                ticket_number: row.items?.tickets?.ticket_number,
+                ticket_id: row.items?.tickets?.ticket_number || 'Unknown',
+            }))
+            .filter(task => {
+                if (searchCustomer && !String(task.customer_name || '').toLowerCase().includes(searchCustomer)) return false
+                if (searchTicket) {
+                    const ticketText = `${task.ticket_number || ''} ${task.item_key || ''}`.toLowerCase()
+                    if (!ticketText.includes(searchTicket)) return false
+                }
+                if (searchTailor && !String(task.tailor_name || '').toLowerCase().includes(searchTailor)) return false
+                if (searchTask && String(task.task_type_name || '').toLowerCase() !== searchTask) return false
+                if (searchCategory && String(task.category_name || '').toLowerCase() !== searchCategory) return false
+                if (searchProduct && String(task.product_type_name || '').toLowerCase() !== searchProduct) return false
+                return true
+            })
+    },
+
     async verifyTask(taskId, status, reason = null) {
         const ctx = await getContext()
         requirePermission(ctx, 'manage_qc')
