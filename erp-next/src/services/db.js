@@ -28,6 +28,14 @@ function isMissingNegotiatedPaySchemaError(error) {
         || (message.includes('negotiated_pay_amount') && message.includes('schema cache'))
         || (message.includes('pay_source') && message.includes('schema cache'))
 }
+
+function isMissingTailorPortalSchemaError(error) {
+    const message = String(error?.message || '')
+
+    return error?.code === 'PGRST202'
+        || error?.code === 'PGRST205'
+        || message.includes('tailor_portal')
+}
 export class NotAuthenticatedError extends Error {
     constructor(message = "User not authenticated") {
         super(message)
@@ -504,6 +512,106 @@ export const db = {
         }
 
         return data || []
+    },
+
+    async getTailorPortalAccessStatus(tailorId) {
+        const ctx = await getContext()
+        requirePermission(ctx, 'manage_tailors')
+
+        const { data, error } = await supabase.rpc('get_tailor_portal_access_status', {
+            p_tailor_id: tailorId
+        })
+
+        if (error) {
+            if (isMissingTailorPortalSchemaError(error)) {
+                throw new Error('Tailor portal is not ready yet. Apply migration 021_tailor_portal_pin_access.sql, then refresh the app.')
+            }
+
+            throw new Error(error.message)
+        }
+
+        return data || { exists: false, is_active: false }
+    },
+
+    async generateTailorPortalAccess(tailorId) {
+        const ctx = await getContext()
+        requirePermission(ctx, 'manage_tailors')
+
+        const { data, error } = await supabase.rpc('generate_tailor_portal_access', {
+            p_tailor_id: tailorId
+        })
+
+        if (error) {
+            if (isMissingTailorPortalSchemaError(error)) {
+                throw new Error('Tailor portal is not ready yet. Apply migration 021_tailor_portal_pin_access.sql, then refresh the app.')
+            }
+
+            throw new Error(error.message)
+        }
+
+        const credentials = data?.[0]
+        if (!credentials?.access_token || !credentials?.pin) {
+            throw new Error('The tailor access credentials could not be generated.')
+        }
+
+        return credentials
+    },
+
+    async disableTailorPortalAccess(tailorId) {
+        const ctx = await getContext()
+        requirePermission(ctx, 'manage_tailors')
+
+        const { data, error } = await supabase.rpc('disable_tailor_portal_access', {
+            p_tailor_id: tailorId
+        })
+
+        if (error) {
+            if (isMissingTailorPortalSchemaError(error)) {
+                throw new Error('Tailor portal is not ready yet. Apply migration 021_tailor_portal_pin_access.sql, then refresh the app.')
+            }
+
+            throw new Error(error.message)
+        }
+
+        return Boolean(data)
+    },
+
+    async authenticateTailorPortal(accessToken, pin) {
+        const { data, error } = await supabase.rpc('authenticate_tailor_portal', {
+            p_access_token: accessToken,
+            p_pin: pin
+        })
+
+        if (error) {
+            if (isMissingTailorPortalSchemaError(error)) {
+                throw new Error('This tailor portal is not available yet.')
+            }
+
+            throw new Error(error.message)
+        }
+
+        return data?.[0] || { error_code: 'INVALID_CREDENTIALS' }
+    },
+
+    async getTailorPortalWork(sessionToken, filters = {}, page = 1, pageSize = 25) {
+        const { data, error } = await supabase.rpc('get_tailor_portal_work', {
+            p_session_token: sessionToken,
+            p_status: filters.status || 'all',
+            p_start_date: filters.startDate || null,
+            p_end_date: filters.endDate || null,
+            p_page: page,
+            p_page_size: pageSize
+        })
+
+        if (error) {
+            if (isMissingTailorPortalSchemaError(error)) {
+                throw new Error('This tailor portal is not available yet.')
+            }
+
+            throw new Error(error.message)
+        }
+
+        return data || { error_code: 'SESSION_EXPIRED' }
     },
 
     async getTailorSpecialPay(tailorId = null) {
