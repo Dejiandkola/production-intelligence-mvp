@@ -126,14 +126,12 @@ export default function Dashboard() {
             sourceItems.forEach(item => {
                 if (item.status === 'CANCELLED' || item.status === 'ARCHIVED') return;
                 if (!productStats[item.product_type_name]) {
-                    productStats[item.product_type_name] = { produced: 0, backlog: 0, replacementProduced: 0, replacementBacklog: 0 };
+                    productStats[item.product_type_name] = { produced: 0, backlog: 0 };
                 }
                 if (item.status === 'OUT_OF_PRODUCTION') {
                     productStats[item.product_type_name].produced++;
-                    if (item.replacement_of_item_id) productStats[item.product_type_name].replacementProduced++;
                 } else {
                     productStats[item.product_type_name].backlog++;
-                    if (item.replacement_of_item_id) productStats[item.product_type_name].replacementBacklog++;
                 }
             });
 
@@ -149,7 +147,7 @@ export default function Dashboard() {
 
         const rankedTopProducts = productNames
             .map((name) => {
-                const currentCounts = currentProductStats[name] || { produced: 0, backlog: 0, replacementProduced: 0, replacementBacklog: 0 };
+                const currentCounts = currentProductStats[name] || { produced: 0, backlog: 0 };
                 const previousCounts = previousProductStats[name] || { produced: 0, backlog: 0 };
                 const total = currentCounts.produced + currentCounts.backlog;
                 const previousTotal = previousCounts.produced + previousCounts.backlog;
@@ -161,8 +159,6 @@ export default function Dashboard() {
                     name,
                     produced: currentCounts.produced,
                     backlog: currentCounts.backlog,
-                    replacementProduced: currentCounts.replacementProduced,
-                    replacementBacklog: currentCounts.replacementBacklog,
                     total,
                     delta,
                     previousTotal,
@@ -422,8 +418,8 @@ export default function Dashboard() {
                                     <tr key={product.name} className="hover:bg-gray-50/60">
                                         <td className="px-4 py-3 font-medium text-gray-800">{product.name}</td>
                                         <td className="px-4 py-3 text-right font-semibold text-maison-primary">{formatNumber(product.total)}</td>
-                                        <td className="px-4 py-3 text-right text-emerald-600">{formatNumber(product.produced)}<div className="text-xs font-normal text-gray-500">{formatNumber(product.replacementProduced)} replacement</div></td>
-                                        <td className="px-4 py-3 text-right text-gray-600">{formatNumber(product.backlog)}<div className="text-xs text-gray-500">{formatNumber(product.replacementBacklog)} replacement</div></td>
+                                        <td className="px-4 py-3 text-right text-emerald-600">{formatNumber(product.produced)}</td>
+                                        <td className="px-4 py-3 text-right text-gray-600">{formatNumber(product.backlog)}</td>
                                         <td className={`px-4 py-3 text-right font-medium ${getDeltaClass(product.delta)}`}>
                                             {formatDelta(product.delta)}
                                         </td>
