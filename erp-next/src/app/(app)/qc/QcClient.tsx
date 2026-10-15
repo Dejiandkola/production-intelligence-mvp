@@ -13,6 +13,7 @@ import { format } from 'date-fns';
 import { Search, FilterX, ChevronDown, Download } from 'lucide-react';
 import ManageItemTasks from './item/[itemId]/QcItemClient';
 import { hasPerm } from '@/lib/permissions';
+import ReplacementTag from '@/components/Requests/ReplacementTag';
 
 const QC_PAGE_SIZE = 50;
 const ITEM_STATUS_OPTIONS = ['IN_PRODUCTION', 'OUT_OF_PRODUCTION', 'ARCHIVED'];
@@ -393,7 +394,7 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
                                 }}
                                 className="cursor-pointer hover:bg-gray-50 transition-colors"
                             >
-                                <TableCell className="font-medium font-mono text-xs">{item.item_key}</TableCell>
+                                <TableCell className="font-medium font-mono text-xs"><span className="block">{item.item_key}</span>{item.replacement_of_item_id && <ReplacementTag originalItemKey={item.replacement_origin_key} className="mt-1" />}</TableCell>
                                 <TableCell className="font-medium">{item.customer_name}</TableCell>
                                 <TableCell>{item.product_type_name}</TableCell>
                                 <TableCell className="whitespace-normal">
@@ -485,6 +486,7 @@ export default function QCQueue({ permissions = [] }: { permissions?: string[] }
                             loadItems();
                         }}
                         canManageQc={canManageQc}
+                        canRequestCorrection={permissions.includes('submit_work_requests') || permissions.includes('manage_customer_service')}
                         rateCard={rateCard}
                         tailors={tailors}
                         specialPayRules={specialPayRules}

@@ -4,14 +4,17 @@
 
 import React, { useState, useEffect } from 'react';
 import { db } from '@/services/db';
+import { createClient } from '@/lib/supabase/client';
 import { useParams, useRouter } from 'next/navigation';
 import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
 import { Table, TableRow, TableCell, Badge } from '@/components/UI/Table';
 import { ArrowLeft, Plus, Trash2, Edit2 } from 'lucide-react';
 import { formatMoney } from '@/lib/formatters';
+import { amendmentLabel } from '@/lib/amendment-label';
+import ReplacementTag from '@/components/Requests/ReplacementTag';
 
-export default function ManageItemTasks({ itemId: propItemId, onClose, canManageQc, rateCard = [], tailors = [], specialPayRules = [] }: { itemId?: string, onClose?: () => void, canManageQc?: boolean, rateCard?: Record<string, unknown>[], tailors?: Record<string, unknown>[], specialPayRules?: Record<string, unknown>[] }) {
+export default function ManageItemTasks({ itemId: propItemId, onClose, canManageQc, canRequestCorrection = false, rateCard = [], tailors = [], specialPayRules = [] }: { itemId?: string, onClose?: () => void, canManageQc?: boolean, canRequestCorrection?: boolean, rateCard?: Record<string, unknown>[], tailors?: Record<string, unknown>[], specialPayRules?: Record<string, unknown>[] }) {
     const params = useParams();
     const itemId = propItemId || params.itemId;
     const router = useRouter();
@@ -42,6 +45,7 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
     const [editCategorySearch, setEditCategorySearch] = useState('');
     const [editTaskTypeSearch, setEditTaskTypeSearch] = useState('');
     const [editTailorSearch, setEditTailorSearch] = useState('');
+    const [correctionReason, setCorrectionReason] = useState('');
 
     async function loadData() {
         setLoading(true);
@@ -164,6 +168,11 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
     const handleCreateTask = async (e) => {
         e.preventDefault();
 
+        if (item?.approved_work_change_request_id) {
+            alert('Tasks on approved replacements are set by the approved request. Submit a correction for an existing task instead.');
+            return;
+        }
+
         if (item?.status === 'ARCHIVED') {
             alert("Archived items cannot be assigned tasks.");
             return;
@@ -236,13 +245,34 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
             return;
         }
 
+        const approvedTask = tasks.find(task => task.id === editTaskData.id);
+        const isApprovedRequestTask = Boolean(approvedTask?.amendment_occurrence_id || item?.approved_work_change_request_id);
+        if (isApprovedRequestTask && (!canRequestCorrection || !correctionReason.trim())) {
+            alert(!canRequestCorrection ? 'Consultant or Customer Service permission is required to request a correction.' : 'Enter a reason for the correction.');
+            return;
+        }
+
         try {
-            await db.updateWorkAssignment(editTaskData.id, {
-                category_type_id: editTaskData.category_type_id,
-                task_type_id: editTaskData.task_type_id,
-                tailor_id: editTaskData.tailor_id
-            });
+            if (isApprovedRequestTask) {
+                const { error } = await createClient().rpc('submit_work_assignment_correction', {
+                    p_assignment_id: editTaskData.id,
+                    p_category_type_id: editTaskData.category_type_id,
+                    p_task_type_id: editTaskData.task_type_id,
+                    p_tailor_id: editTaskData.tailor_id,
+                    p_note: correctionReason.trim(),
+                });
+                if (error) throw new Error(error.message);
+                window.dispatchEvent(new Event('pending-requests-count:refresh'));
+                alert('Correction submitted for Customer Service review. The task has not changed yet.');
+            } else {
+                await db.updateWorkAssignment(editTaskData.id, {
+                    category_type_id: editTaskData.category_type_id,
+                    task_type_id: editTaskData.task_type_id,
+                    tailor_id: editTaskData.tailor_id
+                });
+            }
             setEditingTask(null);
+            setCorrectionReason('');
             setEditCategorySearch('');
             setEditTaskTypeSearch('');
             setEditTailorSearch('');
@@ -300,6 +330,7 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
 
     const isArchivedItem = item.status === 'ARCHIVED';
     const canEditTasks = canManageQc && !isArchivedItem;
+    const editingApprovedRequestTask = Boolean(tasks.find(task => task.id === editingTask)?.amendment_occurrence_id || item?.approved_work_change_request_id);
 
     const handleSelectTailor = (tailor, mode) => {
         if (mode === 'edit') {
@@ -360,6 +391,7 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                 <div>
                     <h1 className="text-xl font-serif text-maison-primary flex items-center gap-3">
                         {item.item_key}
+                        {item.replacement_of_item_id && <ReplacementTag originalItemKey={item.replacement_origin_key} />}
                         <Badge variant="neutral">{item.product_type_name}</Badge>
                         {isArchivedItem && <Badge variant="warning">Archived</Badge>}
                     </h1>
@@ -367,7 +399,7 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                         Ticket: {item.ticket_number} | Customer: {item.customer_name}
                     </p>
                 </div>
-                <Button onClick={() => {
+                {!item.approved_work_change_request_id && <Button onClick={() => {
                     setShowAssignForm(!showAssignForm);
                     if (!showAssignForm) {
                         setNewCategorySearch('');
@@ -382,7 +414,7 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                     }
                 }} disabled={!canEditTasks} title={isArchivedItem ? 'Archived items cannot be assigned tasks' : undefined}>
                     <Plus size={16} className="mr-2" /> Assign Task
-                </Button>
+                </Button>}
             </div>
 
             {isArchivedItem && (
@@ -391,7 +423,7 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                 </div>
             )}
 
-            {showAssignForm && !isArchivedItem && (
+            {showAssignForm && !isArchivedItem && !item.approved_work_change_request_id && (
                 <Card className="border-maison-accent/20 bg-maison-accent/5">
                     <div className="flex justify-between items-center mb-4">
                         <h3 className="font-medium text-maison-primary">Assign New Task</h3>
@@ -583,7 +615,7 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
             {editingTask && !isArchivedItem && (
                 <Card className="border-maison-accent/20 bg-maison-accent/5">
                     <div className="flex justify-between items-center mb-4">
-                        <h3 className="font-medium text-maison-primary">Edit Task</h3>
+                        <h3 className="font-medium text-maison-primary">{editingApprovedRequestTask ? 'Request Task Correction' : 'Edit Task'}</h3>
                     </div>
 
                     <form onSubmit={handleUpdateTask} className="space-y-4">
@@ -717,6 +749,9 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                             </div>
                         </div>
 
+                        {editingApprovedRequestTask && <label className="block text-sm font-medium text-maison-secondary">Reason
+                            <textarea required rows={2} value={correctionReason} onChange={event => setCorrectionReason(event.target.value)} className="mt-1 block w-full rounded-lg border border-gray-200 p-2 text-sm" />
+                        </label>}
                         <div className="pt-2 flex justify-end gap-3">
                             <Button type="button" variant="ghost" onClick={() => {
                                 setEditingTask(null);
@@ -724,7 +759,7 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                                 setEditTaskTypeSearch('');
                                 setEditTailorSearch('');
                             }}>Cancel</Button>
-                            <Button type="submit">Update Task</Button>
+                            <Button type="submit">{editingApprovedRequestTask ? 'Submit Correction' : 'Update Task'}</Button>
                         </div>
                     </form>
                 </Card>
@@ -734,7 +769,7 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                 <Table headers={['Category', 'Task', 'Tailor', 'Est. Pay', 'Status', 'Verified By', 'Actions']}>
                     {tasks.map(task => (
                         <TableRow key={task.id}>
-                            <TableCell>{task.category_name}</TableCell>
+                            <TableCell>{task.amendment_occurrences ? amendmentLabel(task.amendment_occurrences.ordinal) : task.category_name}</TableCell>
                             <TableCell className="font-medium">{task.task_type_name}</TableCell>
                             <TableCell>{task.tailor_name}</TableCell>
                             <TableCell>{formatMoney(task.pay_amount)}</TableCell>
@@ -753,6 +788,7 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                                             onClick={(e) => {
                                                 e.stopPropagation();
                                                 setEditingTask(task.id);
+                                                setCorrectionReason('');
                                                 setEditTaskData({
                                                     id: task.id,
                                                     category_type_id: task.category_type_id,
@@ -764,9 +800,9 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                                                 setEditTailorSearch(task.tailor_name || '');
                                                 setShowAssignForm(false);
                                             }}
-                                            disabled={!canEditTasks}
-                                            className={`p-1 transition-colors ${!canEditTasks ? 'text-gray-300 cursor-not-allowed' : 'text-gray-400 hover:text-maison-primary'}`}
-                                            title="Edit Task"
+                                            disabled={!canEditTasks || (Boolean(task.amendment_occurrence_id || item.approved_work_change_request_id) && !canRequestCorrection)}
+                                            className={`p-1 transition-colors ${!canEditTasks || (Boolean(task.amendment_occurrence_id || item.approved_work_change_request_id) && !canRequestCorrection) ? 'text-gray-300 cursor-not-allowed' : 'text-gray-400 hover:text-maison-primary'}`}
+                                            title={task.amendment_occurrence_id || item.approved_work_change_request_id ? canRequestCorrection ? 'Request correction' : 'Ask a Consultant or Customer Service user to request a correction' : 'Edit task'}
                                         >
                                             <Edit2 size={16} />
                                         </button>
@@ -775,9 +811,9 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                                                 e.stopPropagation();
                                                 handleDeleteTask(task.id);
                                             }}
-                                            disabled={!canEditTasks}
-                                            className={`p-1 transition-colors ${!canEditTasks ? 'text-gray-300 cursor-not-allowed' : 'text-gray-400 hover:text-red-500'}`}
-                                            title="Remove Task"
+                                            disabled={!canEditTasks || Boolean(task.amendment_occurrence_id || item.approved_work_change_request_id)}
+                                            className={`p-1 transition-colors ${!canEditTasks || task.amendment_occurrence_id || item.approved_work_change_request_id ? 'text-gray-300 cursor-not-allowed' : 'text-gray-400 hover:text-red-500'}`}
+                                            title={task.amendment_occurrence_id || item.approved_work_change_request_id ? 'Approved request tasks cannot be removed' : 'Remove task'}
                                         >
                                             <Trash2 size={16} />
                                         </button>

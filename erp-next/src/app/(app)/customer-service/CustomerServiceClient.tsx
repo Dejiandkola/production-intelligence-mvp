@@ -4,6 +4,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { db } from '@/services/db';
+import ReplacementTag from '@/components/Requests/ReplacementTag';
 import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
 import { Modal } from '@/components/UI/Modal';
@@ -675,7 +676,7 @@ export default function CustomerServiceClient({ permissions = [] }: { permission
 
                                         return (
                                             <TableRow key={item.id}>
-                                                <TableCell className="font-mono text-xs font-medium">{item.item_key || '-'}</TableCell>
+                                                <TableCell className="font-mono text-xs font-medium"><span className="block">{item.item_key || '-'}</span>{item.replacement_of_item_id && <ReplacementTag originalItemKey={item.replacement_origin_key} className="mt-1" />}</TableCell>
                                                 <TableCell>{item.product_type_name}</TableCell>
                                                 <TableCell className="whitespace-normal">
                                                     {uniqueCategories.length > 0 ? (
@@ -862,6 +863,7 @@ export default function CustomerServiceClient({ permissions = [] }: { permission
                     <div className="space-y-5">
                         <div className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3 text-sm">
                             <div className="font-mono text-xs text-maison-primary">{editingItem.item_key}</div>
+                            {editingItem.replacement_of_item_id && <ReplacementTag originalItemKey={editingItem.replacement_origin_key} className="mt-1" />}
                             <div className="mt-1 text-maison-secondary">{editingItem.ticket_number}</div>
                         </div>
                         <div>

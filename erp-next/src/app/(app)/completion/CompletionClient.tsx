@@ -4,6 +4,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { db } from '@/services/db';
+import ReplacementTag from '@/components/Requests/ReplacementTag';
 import { Card } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
 import { Table, TableRow, TableCell, Badge } from '@/components/UI/Table';
@@ -278,7 +279,7 @@ export default function Receiving({ canManageCompletion }: { canManageCompletion
                                     <Table headers={['Item Key', 'Product', 'Current Status', 'Action']}>
                                         {group.items.map((item) => (
                                             <TableRow key={item.id}>
-                                                <TableCell className="font-medium font-mono text-xs">{item.item_key}</TableCell>
+                                                <TableCell className="font-medium font-mono text-xs"><span className="block">{item.item_key}</span>{item.replacement_of_item_id && <ReplacementTag originalItemKey={item.replacement_origin_key} className="mt-1" />}</TableCell>
                                                 <TableCell>{item.product_type_name}</TableCell>
                                                 <TableCell>
                                                     <Badge variant={item.is_received ? 'success' : 'brand'}>

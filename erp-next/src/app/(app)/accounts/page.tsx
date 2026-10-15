@@ -12,6 +12,7 @@ import { Button } from '@/components/UI/Button';
 import { Badge, Table, TableCell, TableRow } from '@/components/UI/Table';
 import { Modal } from '@/components/UI/Modal';
 import { formatMoney } from '@/lib/formatters';
+import ReplacementTag from '@/components/Requests/ReplacementTag';
 
 const TAILOR_PAGE_SIZE = 25;
 const SEARCH_DEBOUNCE_MS = 350;
@@ -19,7 +20,7 @@ const ACCOUNT_FILTER_TABS = [
     { key: 'all', label: 'All' },
     { key: 'pending', label: 'Pending' },
     { key: 'price-review', label: 'Price Review' },
-    { key: 'approved', label: 'Approved' },
+    { key: 'approved', label: 'Approved / Paid' },
     { key: 'rejected', label: 'Rejected' },
     { key: 'reversed', label: 'Reversed' },
 ];
@@ -27,6 +28,7 @@ const ACCOUNT_FILTER_TABS = [
 export default function PendingVerification() {
     const router = useRouter();
     const [authorized, setAuthorized] = useState(false);
+    const [canApproveQc, setCanApproveQc] = useState(false);
     const [accessDenied, setAccessDenied] = useState(false);
     const [tasks, setTasks] = useState([]);
     const [totalCount, setTotalCount] = useState(0);
@@ -68,7 +70,7 @@ export default function PendingVerification() {
         try {
             const permissions = await db.getMyPermissions();
 
-            if (!permissions.includes('admin')) {
+            if (!permissions.includes('admin') && !permissions.includes('manage_payments')) {
                 setAccessDenied(true);
                 setTimeout(() => {
                     if (permissions.includes('manage_qc')) router.replace('/qc');
@@ -79,6 +81,7 @@ export default function PendingVerification() {
                     else router.replace('/unauthorized?reason=no_access');
                 }, 2500);
             } else {
+                setCanApproveQc(permissions.includes('admin') || permissions.includes('manage_qc'));
                 setAuthorized(true);
             }
         } catch {
@@ -236,6 +239,18 @@ export default function PendingVerification() {
         await loadTasks();
     };
 
+    const handleRecordPayment = async (task) => {
+        const reference = window.prompt('Enter the payment or transfer reference:');
+        if (!reference?.trim()) return;
+        if (!window.confirm(`Record ${formatMoney(task.pay_amount)} as paid to ${task.tailor_name || 'this tailor'}?`)) return;
+        try {
+            await db.recordAssignmentDisbursement(task.id, reference.trim());
+            await loadTasks();
+        } catch (cause) {
+            alert(cause?.message || 'Could not record payment.');
+        }
+    };
+
     const handleReject = async (task) => {
         const reason = window.prompt('Enter rejection reason:');
         if (!reason) return;
@@ -332,6 +347,8 @@ export default function PendingVerification() {
             return 'REOPENED';
         }
 
+        if (task.status === 'Approved') return 'QC Approved';
+
         return task.status;
     };
 
@@ -410,7 +427,7 @@ export default function PendingVerification() {
                             </div>
                         </>
                     )}
-                    <div className="flex gap-2">
+                    {canApproveQc && <div className="flex gap-2">
                         <Button
                             size="sm"
                             className="bg-emerald-600 text-white hover:bg-emerald-700"
@@ -425,7 +442,7 @@ export default function PendingVerification() {
                         >
                             <XSquare size={16} className="mr-1" /> Reject
                         </Button>
-                    </div>
+                    </div>}
                 </div>
             );
         }
@@ -437,14 +454,15 @@ export default function PendingVerification() {
                         {getStatusLabel(task)}
                     </Badge>
                     <div>
-                        <Button
+                        {task.status === 'Approved' && <Button size="sm" onClick={() => void handleRecordPayment(task)}>Record Payment</Button>}
+                        {canApproveQc && <Button
                             size="sm"
                             variant="secondary"
                             isLoading={reversingTaskId === task.id}
                             onClick={() => handleReverse(task)}
                         >
                             Reverse
-                        </Button>
+                        </Button>}
                     </div>
                 </div>
             );
@@ -725,7 +743,7 @@ export default function PendingVerification() {
                                                 <TableCell className="text-gray-500">
                                                     {format(new Date(task.created_at), 'MMM d, HH:mm')}
                                                 </TableCell>
-                                                <TableCell className="font-mono text-xs">{task.item_key}</TableCell>
+                                                <TableCell className="font-mono text-xs"><span className="block">{task.item_key}</span>{task.replacement_of_item_id && <ReplacementTag originalItemKey={task.replacement_origin_key} className="mt-1" />}</TableCell>
                                                 <TableCell>{task.customer_name}</TableCell>
                                                 <TableCell>
                                                     <div className="font-medium">{task.task_type_name}</div>
@@ -763,6 +781,7 @@ export default function PendingVerification() {
                         <div className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
                             <div className="flex flex-wrap items-center gap-2">
                                 <span className="font-mono text-xs text-maison-primary">{activeNegotiatedTask.item_key}</span>
+                                {activeNegotiatedTask.replacement_of_item_id && <ReplacementTag originalItemKey={activeNegotiatedTask.replacement_origin_key} />}
                                 <Badge variant="neutral">{activeNegotiatedTask.category_name || 'Uncategorised'}</Badge>
                                 <Badge variant={getTaskPaySourceVariant(getTaskPaySourceLabel(activeNegotiatedTask))}>
                                     {getTaskPaySourceLabel(activeNegotiatedTask)}

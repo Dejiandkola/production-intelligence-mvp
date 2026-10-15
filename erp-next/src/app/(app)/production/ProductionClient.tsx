@@ -12,6 +12,7 @@ import { Modal } from '@/components/UI/Modal';
 import { Search, FilterX, Clock, CheckCircle2, ChevronDown, ChevronRight, ArrowLeft } from 'lucide-react';
 import { format } from 'date-fns';
 import { formatMoney } from '@/lib/formatters';
+import ReplacementTag from '@/components/Requests/ReplacementTag';
 
 const PRODUCTION_ASSIGNMENT_CATEGORIES = ['Cutting', 'Airstay Cutting', 'Embroidery'];
 const TICKET_PAGE_SIZE = 50;
@@ -49,7 +50,7 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
     const [loadingMore, setLoadingMore] = useState(false);
     const [page, setPage] = useState(1);
     const [totalTickets, setTotalTickets] = useState(0);
-    const [summary, setSummary] = useState({ totalBacklog: 0, totalCompleted: 0 });
+    const [summary, setSummary] = useState({ totalBacklog: 0, totalCompleted: 0, firstPassBacklog: null, replacementBacklog: null, firstPassCompleted: null, replacementCompleted: null });
     const [updatingStatusIds, setUpdatingStatusIds] = useState({});
     const [activeTab, setActiveTab] = useState('ALL');
     const loadMoreRef = useRef(null);
@@ -741,6 +742,7 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
                     <div className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
                         <div className="flex items-center gap-3">
                             <span className="font-mono text-xs text-maison-primary">{activeAssignmentItem.item_key}</span>
+                            {activeAssignmentItem.replacement_of_item_id && <ReplacementTag originalItemKey={activeAssignmentItem.replacement_origin_key} />}
                             <Badge variant="neutral">{activeAssignmentItem.product_type_name}</Badge>
                             {isArchivedAssignmentItem && <Badge variant="warning">Archived</Badge>}
                         </div>
@@ -979,6 +981,7 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
                     <div>
                         <p className="text-sm font-medium text-gray-500">Total Backlog</p>
                         <h3 className="text-2xl font-serif text-maison-primary">{totalBacklog}</h3>
+                        {summary.replacementBacklog !== null && <p className="text-xs text-gray-500">First-pass {summary.firstPassBacklog} · Replacements {summary.replacementBacklog}</p>}
                     </div>
                 </Card>
                 <Card className="flex items-center gap-4">
@@ -988,6 +991,7 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
                     <div>
                         <p className="text-sm font-medium text-gray-500">Total Out of Production</p>
                         <h3 className="text-2xl font-serif text-maison-primary">{totalCompleted}</h3>
+                        {summary.replacementCompleted !== null && <p className="text-xs text-gray-500">First-pass {summary.firstPassCompleted} · Replacements {summary.replacementCompleted}</p>}
                     </div>
                 </Card>
             </div>
@@ -1125,6 +1129,7 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
                                             <TableRow key={item.id}>
                                                 <TableCell className="max-w-0 font-medium font-mono text-xs">
                                                     <span className="block truncate" title={item.item_key}>{item.item_key}</span>
+                                                    {item.replacement_of_item_id && <ReplacementTag originalItemKey={item.replacement_origin_key} className="mt-1" />}
                                                 </TableCell>
                                                 <TableCell className="max-w-0">
                                                     <span className="block truncate" title={item.product_type_name}>{item.product_type_name}</span>
@@ -1230,6 +1235,7 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
                                 <div>
                                     <div className="flex flex-wrap items-center gap-2">
                                         <span className="font-mono text-xs text-maison-primary">{activeTaskDetailItem.item_key}</span>
+                                        {activeTaskDetailItem.replacement_of_item_id && <ReplacementTag originalItemKey={activeTaskDetailItem.replacement_origin_key} />}
                                         <Badge variant="neutral">{activeTaskDetailItem.product_type_name}</Badge>
                                         <Badge variant={getStatusVariant(activeTaskDetailItem.status)}>
                                             {getStatusLabel(activeTaskDetailItem.status)}
@@ -1240,7 +1246,7 @@ export default function ItemList({ canManageProduction }: { canManageProduction:
                                         Ticket: {activeTaskDetailItem.ticket_number} | Customer: {activeTaskDetailItem.customer_name}
                                     </p>
                                 </div>
-                                {!isTaskDetailAssignmentMode && canManageTaskDetailAssignments && (
+                                {!isTaskDetailAssignmentMode && canManageTaskDetailAssignments && !activeTaskDetailItem.approved_work_change_request_id && (
                                     <Button
                                         size="sm"
                                         onClick={() => openTaskDetailAssignmentForm(activeTaskDetailItem, '', 'create')}

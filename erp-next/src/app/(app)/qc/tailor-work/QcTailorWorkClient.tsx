@@ -4,6 +4,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import ReplacementTag from '@/components/Requests/ReplacementTag';
 import { format } from 'date-fns';
 import { ChevronDown, ChevronRight, Download, FilterX, Search } from 'lucide-react';
 import { db } from '@/services/db';
@@ -529,6 +530,7 @@ export default function QcTailorWorkClient({ permissions = [] }: { permissions?:
                                                     >
                                                         {task.item_key || '-'}
                                                     </Link>
+                                                    {task.replacement_of_item_id && <ReplacementTag originalItemKey={task.replacement_origin_key} className="mt-1" />}
                                                 </TableCell>
                                                 <TableCell className="max-w-0">
                                                     <span className="block truncate" title={task.product_type_name}>{task.product_type_name || '-'}</span>

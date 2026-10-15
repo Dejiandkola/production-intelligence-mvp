@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
-export function Modal({ isOpen, onClose, title, children, maxWidth = 'max-w-lg' }) {
+export function Modal({ isOpen, onClose, title, children, maxWidth = 'max-w-lg', scrollable = false }) {
     useEffect(() => {
         const handleEsc = (e) => {
             if (e.key === 'Escape') onClose();
@@ -37,7 +37,7 @@ export function Modal({ isOpen, onClose, title, children, maxWidth = 'max-w-lg' 
                     </button>
                 </div>
 
-                <div className="p-6 overflow-y-auto lg:overflow-visible flex-1">
+                <div className={`min-h-0 flex-1 p-6 ${scrollable ? 'overflow-y-auto' : 'overflow-y-auto lg:overflow-visible'}`}>
                     {children}
                 </div>
             </div>

@@ -216,6 +216,54 @@ function mapItemRow(item) {
     }
 }
 
+async function loadItemsByIds(columns, ids) {
+    const rows = []
+    for (let index = 0; index < ids.length; index += 50) {
+        const { data, error } = await supabase.from('items').select(columns).in('id', ids.slice(index, index + 50))
+        if (error) return { data: null, error }
+        rows.push(...(data || []))
+    }
+    return { data: rows, error: null }
+}
+
+async function replacementOriginKeys(items) {
+    const ids = [...new Set(items.map(item => item?.replacement_of_item_id).filter(Boolean))]
+    if (!ids.length) return new Map()
+
+    const { data, error } = await loadItemsByIds('id, item_key', ids)
+    if (error) {
+        console.warn('Could not load replacement origins:', error.code, error.message)
+        return new Map()
+    }
+    return new Map((data || []).map(item => [item.id, item.item_key]))
+}
+
+async function withReplacementOrigins(items) {
+    const originKeys = await replacementOriginKeys(items)
+    return items.map(item => ({
+        ...item,
+        replacement_origin_key: item.replacement_of_item_id ? originKeys.get(item.replacement_of_item_id) || null : null
+    }))
+}
+
+async function withTaskReplacementOrigins(tasks) {
+    const ids = [...new Set(tasks.map(task => task?.item_id).filter(Boolean))]
+    if (!ids.length) return tasks
+
+    const { data, error } = await loadItemsByIds('id, replacement_of_item_id', ids)
+    if (error) {
+        console.warn('Could not load task replacement identities:', error.code, error.message)
+        return tasks
+    }
+    const items = await withReplacementOrigins(data || [])
+    const byId = new Map(items.map(item => [item.id, item]))
+    return tasks.map(task => ({
+        ...task,
+        replacement_of_item_id: byId.get(task.item_id)?.replacement_of_item_id || null,
+        replacement_origin_key: byId.get(task.item_id)?.replacement_origin_key || null
+    }))
+}
+
 
 const CUSTOM_FIELD_TYPES = ['short_text', 'long_text', 'number', 'date', 'dropdown', 'checkbox']
 
@@ -612,6 +660,30 @@ export const db = {
         }
 
         return data || { error_code: 'SESSION_EXPIRED' }
+    },
+
+    async getTailorPortalPaymentSummary(sessionToken, filters = {}) {
+        const { data, error } = await supabase.rpc('get_tailor_portal_payment_summary', {
+            p_session_token: sessionToken,
+            p_start_date: filters.startDate || null,
+            p_end_date: filters.endDate || null
+        })
+        if (error) {
+            if (error.code === 'PGRST202') return null
+            throw new Error(error.message)
+        }
+        return data
+    },
+
+    async recordAssignmentDisbursement(assignmentId, paymentReference) {
+        const ctx = await getContext()
+        requireAnyPermission(ctx, ['manage_payments', 'admin'])
+        const { data, error } = await supabase.rpc('record_assignment_disbursement', {
+            p_assignment_id: assignmentId,
+            p_payment_reference: paymentReference
+        })
+        if (error) throw new Error(error.message)
+        return data
     },
 
     async getTailorSpecialPay(tailorId = null) {
@@ -1968,7 +2040,7 @@ export const db = {
 
         const rows = data || []
         return {
-            items: rows.map(row => mapItemRow(row.item || {})),
+            items: await withReplacementOrigins(rows.map(row => mapItemRow(row.item || {}))),
             totalTickets: Number(rows[0]?.total_tickets || 0)
         }
     },
@@ -1989,10 +2061,32 @@ export const db = {
         }
 
         const summary = data?.[0] || {}
-        return {
+        const result = {
             totalBacklog: Number(summary.total_backlog || 0),
-            totalCompleted: Number(summary.total_completed || 0)
+            totalCompleted: Number(summary.total_completed || 0),
+            firstPassBacklog: null,
+            replacementBacklog: null,
+            firstPassCompleted: null,
+            replacementCompleted: null
         }
+
+        const { data: origins, error: originError } = await supabase.rpc('get_production_origin_summary', {
+            p_ticket_search: filters.ticketId || null,
+            p_customer_search: filters.customerName || null,
+            p_product_type: filters.productType || null,
+            p_status: filters.status || null,
+            p_start_date: toDateBoundary(filters.startDate, 'start'),
+            p_end_date: toDateBoundary(filters.endDate, 'end')
+        })
+        if (!originError && origins?.[0]) {
+            result.firstPassBacklog = Number(origins[0].first_pass_backlog || 0)
+            result.replacementBacklog = Number(origins[0].replacement_backlog || 0)
+            result.firstPassCompleted = Number(origins[0].first_pass_completed || 0)
+            result.replacementCompleted = Number(origins[0].replacement_completed || 0)
+        } else if (originError && originError.code !== 'PGRST202') {
+            console.error('Production origin summary unavailable:', originError)
+        }
+        return result
     },
 
     async getItemById(itemId) {
@@ -2033,8 +2127,10 @@ export const db = {
 
         if (!data) return null;
 
+        const originKeys = await replacementOriginKeys([data])
         return {
             ...data,
+            replacement_origin_key: data.replacement_of_item_id ? originKeys.get(data.replacement_of_item_id) || null : null,
             raw_status: data.status,
             status: normalizeItemStatus(data.status),
             receiving_status: getReceivingStatus(data),
@@ -2042,6 +2138,19 @@ export const db = {
             customer_name: data.tickets?.customer_name,
             product_type_name: data.product_types?.name
         }
+    },
+
+    async getReplacementIdentityForItems(itemIds) {
+        const ids = [...new Set(itemIds.filter(Boolean))]
+        if (!ids.length) return new Map()
+
+        const { data, error } = await supabase.from('items').select('id, replacement_of_item_id').in('id', ids)
+        if (error) {
+            console.error('Could not load request replacement identities:', error)
+            return new Map()
+        }
+        const items = await withReplacementOrigins(data || [])
+        return new Map(items.map(item => [item.id, item]))
     },
 
     async getTasksByItemId(itemId) {
@@ -2053,7 +2162,8 @@ export const db = {
                 *,
                 task_types(name),
                 tailors(name),
-                category_types(name)
+                category_types(name),
+                amendment_occurrences(ordinal)
             `)
             .eq('organization_id', ctx.organizationId)
             .eq('item_id', itemId)
@@ -2624,10 +2734,6 @@ async updateTicket(id, { customer_name }) {
         const { data, error } = await supabase.rpc('update_work_assignment', allowedPayload);
 
         if (error) {
-            if (process.env.NODE_ENV !== 'production') {
-                console.error('updateWorkAssignment error:', error);
-            }
-
             const isDuplicate =
                 error.code === '23505' ||
                 error.message?.includes('duplicate key value') ||
@@ -2801,14 +2907,14 @@ async updateTicket(id, { customer_name }) {
         const rows = data || []
 
         return {
-            data: rows.map(row => row.task || {}).map(task => ({
+            data: await withTaskReplacementOrigins(rows.map(row => row.task || {}).map(task => ({
                 ...task,
                 raw_status: task.status,
                 status: normalizeAssignmentStatus(task.status),
                 task_name: task.task_type_name,
                 tailor_name: task.tailor_name,
                 ticket_id: task.ticket_number || 'Unknown'
-            })),
+            }))),
             count: Number(rows[0]?.total_tailors || 0)
         }
     },
@@ -2837,6 +2943,7 @@ async updateTicket(id, { customer_name }) {
                     items(
                         id,
                         item_key,
+                        replacement_of_item_id,
                         status,
                         created_at,
                         product_types(name),
@@ -2883,6 +2990,7 @@ async updateTicket(id, { customer_name }) {
         const uniqueRows = Array.from(
             new Map(rows.map(row => [row.id, row])).values()
         )
+        const originKeys = await replacementOriginKeys(uniqueRows.map(row => row.items))
 
         return uniqueRows
             .map(row => ({
@@ -2898,6 +3006,8 @@ async updateTicket(id, { customer_name }) {
                 category_name: row.category_types?.name,
                 item_id: row.items?.id,
                 item_key: row.items?.item_key,
+                replacement_of_item_id: row.items?.replacement_of_item_id,
+                replacement_origin_key: originKeys.get(row.items?.replacement_of_item_id) || null,
                 item_status: normalizeItemStatus(row.items?.status),
                 item_created_at: row.items?.created_at,
                 product_type_name: row.items?.product_types?.name,

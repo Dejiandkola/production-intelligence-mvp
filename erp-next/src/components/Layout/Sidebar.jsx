@@ -1,18 +1,20 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
-import { LayoutDashboard, ShoppingBag, Box, Users, PieChart, Shirt, CheckCircle2, X, Headset, History, Settings } from 'lucide-react';
+import { LayoutDashboard, ShoppingBag, Box, Users, UserRoundCog, ClipboardList, PieChart, Shirt, CheckCircle2, X, Headset, History, Settings, ChevronDown, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import clsx from 'clsx';
 import { db } from '@/services/db';
+import { createClient } from '@/lib/supabase/client';
 
 const navigation = [
     { name: 'Dashboard', href: '/', icon: LayoutDashboard },
 
     // Operational
     { name: 'Customer Service', href: '/customer-service', icon: Headset },
+    { name: 'Consultants', href: '/requests', icon: ClipboardList, requestOnly: true },
     { name: 'Production', href: '/production', icon: Shirt },
     { name: 'QC Queue', href: '/qc', icon: CheckCircle2 },
     { name: 'Completion', href: '/completion', icon: Box }, // Reusing Inventory icon for Receiving
@@ -23,11 +25,27 @@ const navigation = [
     { name: 'Tailors', href: '/tailors', icon: Users },
     { name: 'Rates', href: '/rates', icon: PieChart },
     { name: 'Settings', href: '/settings', icon: Settings },
+    { name: 'Users', href: '/users', icon: UserRoundCog, adminOnly: true },
 ];
 
 export function Sidebar({ isOpen, onClose }) {
     const pathname = usePathname();
     const [newItemsCount, setNewItemsCount] = useState(0);
+    const [pendingRequestsCount, setPendingRequestsCount] = useState(0);
+    const [isAdmin, setIsAdmin] = useState(false);
+    const [permissions, setPermissions] = useState([]);
+    const [customerServiceExpanded, setCustomerServiceExpanded] = useState(false);
+    const canReviewRequests = permissions.includes('manage_customer_service');
+    const canViewRequests = canReviewRequests || permissions.includes('submit_work_requests') || isAdmin;
+    const customerServiceOpen = customerServiceExpanded || pathname.startsWith('/customer-service');
+
+    useEffect(() => {
+        let mounted = true;
+        db.getMyPermissions()
+            .then(permissions => { if (mounted) { setPermissions(permissions); setIsAdmin(permissions.includes('admin')); } })
+            .catch(() => { if (mounted) setIsAdmin(false); });
+        return () => { mounted = false; };
+    }, []);
 
     useEffect(() => {
         let mounted = true;
@@ -49,6 +67,32 @@ export function Sidebar({ isOpen, onClose }) {
             window.removeEventListener('new-items-count:refresh', loadNewItemsCount);
         };
     }, [pathname]);
+
+    useEffect(() => {
+        if (!canViewRequests) return;
+        let mounted = true;
+        const supabase = createClient();
+
+        const loadPendingRequestsCount = async () => {
+            const [requests, corrections] = await Promise.all([
+                supabase.from('work_change_requests').select('id', { count: 'exact', head: true }).eq('status', 'PENDING'),
+                supabase.from('work_assignment_corrections').select('id', { count: 'exact', head: true }).eq('status', 'PENDING'),
+            ]);
+            if (!mounted) return;
+            if (!requests.error && !corrections.error) {
+                setPendingRequestsCount((requests.count || 0) + (corrections.count || 0));
+            }
+        };
+
+        void loadPendingRequestsCount();
+        const interval = window.setInterval(() => { void loadPendingRequestsCount(); }, 60000);
+        window.addEventListener('pending-requests-count:refresh', loadPendingRequestsCount);
+        return () => {
+            mounted = false;
+            window.clearInterval(interval);
+            window.removeEventListener('pending-requests-count:refresh', loadPendingRequestsCount);
+        };
+    }, [canViewRequests, pathname]);
 
     return (
         <>
@@ -92,8 +136,24 @@ export function Sidebar({ isOpen, onClose }) {
                     <div className="px-2 mb-2 text-xs font-medium text-maison-secondary uppercase tracking-wider">
                         Atelier
                     </div>
-                    {navigation.map((item) => {
-                        const isActive = pathname === item.href;
+                    {navigation.filter(item => {
+                        if (item.adminOnly) return isAdmin;
+                        if (item.requestOnly) return permissions.includes('submit_work_requests') || isAdmin;
+                        if (item.href === '/customer-service') return canViewRequests;
+                        if (permissions.includes('submit_work_requests') && !isAdmin && !permissions.includes('manage_customer_service')) return false;
+                        return true;
+                    }).map((item) => {
+                        const isActive = pathname === item.href || (item.href !== '/' && item.href !== '/customer-service' && pathname.startsWith(`${item.href}/`));
+                        if (item.href === '/customer-service') {
+                            return <React.Fragment key={item.name}>
+                                <div className={clsx('flex items-center rounded-lg text-sm font-medium transition-colors', isActive ? 'bg-maison-bg text-maison-primary' : 'text-maison-secondary hover:bg-gray-50 hover:text-maison-primary')}>
+                                    {canReviewRequests ? <Link href={item.href} onClick={() => onClose && window.innerWidth < 768 && onClose()} className="flex min-w-0 flex-1 items-center px-3 py-2.5"><item.icon className="mr-3 h-5 w-5 shrink-0" aria-hidden="true" strokeWidth={1.5} /><span className="flex-1">{item.name}</span></Link> : <button type="button" aria-expanded={customerServiceOpen} onClick={() => setCustomerServiceExpanded(value => !value)} className="flex min-w-0 flex-1 items-center px-3 py-2.5 text-left"><item.icon className="mr-3 h-5 w-5 shrink-0" aria-hidden="true" strokeWidth={1.5} /><span className="flex-1">{item.name}</span></button>}
+                                    {canReviewRequests && <button type="button" aria-label={customerServiceOpen ? 'Collapse Customer Service' : 'Expand Customer Service'} aria-expanded={customerServiceOpen} onClick={() => setCustomerServiceExpanded(value => !value)} className="rounded-md p-2 hover:bg-gray-100">{customerServiceOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</button>}
+                                    {!canReviewRequests && (customerServiceOpen ? <ChevronDown className="mr-3 h-4 w-4" /> : <ChevronRight className="mr-3 h-4 w-4" />)}
+                                </div>
+                                {canViewRequests && customerServiceOpen && <Link href="/customer-service/requests" onClick={() => onClose && window.innerWidth < 768 && onClose()} className={clsx('ml-4 flex min-w-0 items-center rounded-lg px-2 py-2 text-sm transition-colors', pathname === '/customer-service/requests' ? 'bg-maison-bg font-medium text-maison-primary' : 'text-maison-secondary hover:bg-gray-50 hover:text-maison-primary')}><ClipboardList className="mr-2 h-4 w-4 shrink-0" strokeWidth={1.5} /><span className="min-w-0 flex-1 whitespace-nowrap">Pending Requests</span>{pendingRequestsCount > 0 && <span className="ml-2 shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">{pendingRequestsCount > 99 ? '99+' : pendingRequestsCount}</span>}</Link>}
+                            </React.Fragment>;
+                        }
                         return (
                             <Link
                                 key={item.name}

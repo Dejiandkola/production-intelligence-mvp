@@ -12,8 +12,8 @@ const PAGE_SIZE = 25
 
 const STATUS_OPTIONS = [
   { value: 'all', label: 'All' },
-  { value: 'paid', label: 'Paid' },
-  { value: 'not_paid', label: 'Not Paid' },
+  { value: 'paid', label: 'QC Approved / Paid' },
+  { value: 'not_paid', label: 'Awaiting QC' },
 ]
 
 function formatDateInput(date: Date) {
@@ -40,8 +40,8 @@ function getCurrentWorkWeek() {
 
 function statusDetails(status: string) {
   const details = {
-    CREATED: { label: 'Not Paid', className: 'bg-amber-50 text-amber-700' },
-    QC_PASSED: { label: 'Paid', className: 'bg-emerald-50 text-emerald-700' },
+    CREATED: { label: 'Awaiting QC', className: 'bg-amber-50 text-amber-700' },
+    QC_PASSED: { label: 'QC Approved', className: 'bg-sky-50 text-sky-700' },
     PAID: { label: 'Paid', className: 'bg-emerald-50 text-emerald-700' },
   }
 
@@ -73,6 +73,7 @@ export default function TailorPortalClient({ accessToken }: { accessToken: strin
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [portalData, setPortalData] = useState(null)
+  const [paymentSummary, setPaymentSummary] = useState(null)
   const [status, setStatus] = useState('all')
   const [startDate, setStartDate] = useState(defaultDateRange.startDate)
   const [endDate, setEndDate] = useState(defaultDateRange.endDate)
@@ -88,6 +89,7 @@ export default function TailorPortalClient({ accessToken }: { accessToken: strin
     window.sessionStorage.removeItem(storageKey)
     setSessionToken('')
     setPortalData(null)
+    setPaymentSummary(null)
     setPin('')
     setError(message)
   }, [storageKey])
@@ -111,6 +113,12 @@ export default function TailorPortalClient({ accessToken }: { accessToken: strin
       }
 
       setPortalData(result)
+      const paymentResult = await db.getTailorPortalPaymentSummary(sessionToken, { startDate, endDate })
+      if (paymentResult?.error_code === 'SESSION_EXPIRED') {
+        clearSession('Your access session has expired. Enter your PIN again.')
+        return
+      }
+      setPaymentSummary(paymentResult)
     } catch (loadError) {
       setError(loadError.message || 'Unable to load your work history.')
     } finally {
@@ -249,18 +257,24 @@ export default function TailorPortalClient({ accessToken }: { accessToken: strin
           <div className="mt-5 rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
         )}
 
-        <section className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <SummaryCard
+        <section className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          {paymentSummary && <SummaryCard
             icon={Banknote}
-            label="Paid Amount"
-            value={formatMoney(summary.paid_amount, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-            helper="Approved by Accounts"
+            label="Paid"
+            value={formatMoney(paymentSummary?.paid_amount || 0, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+            helper="Payment recorded"
+          />}
+          <SummaryCard
+            icon={BriefcaseBusiness}
+            label={paymentSummary ? 'Approved, Not Paid' : 'QC Approved / Paid'}
+            value={formatMoney(paymentSummary?.approved_unpaid_amount ?? summary.paid_amount, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+            helper={paymentSummary ? 'QC approved; payment not recorded' : 'QC approved, including any recorded payments'}
           />
           <SummaryCard
             icon={BriefcaseBusiness}
-            label="Not Paid Amount"
-            value={formatMoney(summary.not_paid_amount, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-            helper="Still awaiting approval"
+            label="Awaiting QC"
+            value={formatMoney(paymentSummary?.awaiting_qc_amount ?? summary.not_paid_amount, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+            helper="Not yet QC approved"
           />
         </section>
         <div className="mt-3 text-right text-sm text-maison-secondary">
