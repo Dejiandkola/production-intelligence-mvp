@@ -5,7 +5,7 @@ import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { OfflineBanner } from '@/components/UI/OfflineBanner';
 
-export function DashboardLayout({ children }) {
+export function DashboardLayout({ children, permissions }) {
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
     return (
@@ -14,6 +14,7 @@ export function DashboardLayout({ children }) {
             <Sidebar
                 isOpen={isSidebarOpen}
                 onClose={() => setIsSidebarOpen(false)}
+                permissions={permissions}
             />
 
             <main className="flex-1 flex flex-col min-w-0 overflow-hidden">

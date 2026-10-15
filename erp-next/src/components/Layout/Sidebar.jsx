@@ -28,24 +28,15 @@ const navigation = [
     { name: 'Users', href: '/users', icon: UserRoundCog, adminOnly: true },
 ];
 
-export function Sidebar({ isOpen, onClose }) {
+export function Sidebar({ isOpen, onClose, permissions = [] }) {
     const pathname = usePathname();
     const [newItemsCount, setNewItemsCount] = useState(0);
     const [pendingRequestsCount, setPendingRequestsCount] = useState(0);
-    const [isAdmin, setIsAdmin] = useState(false);
-    const [permissions, setPermissions] = useState([]);
+    const isAdmin = permissions.includes('admin');
     const [customerServiceExpanded, setCustomerServiceExpanded] = useState(false);
     const canReviewRequests = permissions.includes('manage_customer_service');
     const canViewRequests = canReviewRequests || permissions.includes('submit_work_requests') || isAdmin;
     const customerServiceOpen = customerServiceExpanded || pathname.startsWith('/customer-service');
-
-    useEffect(() => {
-        let mounted = true;
-        db.getMyPermissions()
-            .then(permissions => { if (mounted) { setPermissions(permissions); setIsAdmin(permissions.includes('admin')); } })
-            .catch(() => { if (mounted) setIsAdmin(false); });
-        return () => { mounted = false; };
-    }, []);
 
     useEffect(() => {
         let mounted = true;

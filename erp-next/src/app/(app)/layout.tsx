@@ -30,7 +30,7 @@ export default async function AppLayout({
 
     const { data: userRoles, error: rolesError } = await supabase
         .from('user_roles')
-        .select('role_id')
+        .select('role_id, roles(role_permissions(permissions(name)))')
         .eq('user_id', data.user.id)
         .eq('organization_id', profile.organization_id)
 
@@ -38,5 +38,12 @@ export default async function AppLayout({
         redirect('/unauthorized')
     }
 
-    return <DashboardLayout>{children}</DashboardLayout>
+    const role = userRoles[0].roles as unknown as {
+        role_permissions?: { permissions: { name: string } | null }[]
+    } | null
+    const permissions = role?.role_permissions
+        ?.map(entry => entry.permissions?.name)
+        .filter((name): name is string => Boolean(name)) || []
+
+    return <DashboardLayout permissions={permissions}>{children}</DashboardLayout>
 }
