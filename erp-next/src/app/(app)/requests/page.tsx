@@ -7,5 +7,5 @@ export default async function RequestsPage() {
   if (!user || (!permissions.includes('submit_work_requests') && !permissions.includes('admin'))) {
     redirect('/unauthorized')
   }
-  return <RequestsClient userId={user.id} />
+  return <RequestsClient userId={user.id} canEditAnyRequest={permissions.includes('manage_customer_service') || permissions.includes('admin')} />
 }

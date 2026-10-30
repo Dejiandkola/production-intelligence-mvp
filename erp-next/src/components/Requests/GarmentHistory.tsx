@@ -36,7 +36,9 @@ type HistoryItem = {
 type History = { root_item_id: string; items: HistoryItem[] }
 type Correction = { id: string; assignment_id: string; note: string; status: string; created_at: string; review_reason: string | null }
 
-function taskStatus(status: string) {
+function taskStatus(status: string, isAmendment: boolean) {
+  if (isAmendment && status === 'CREATED') return 'In progress'
+  if (isAmendment && status === 'QC_PASSED') return 'Completed'
   if (status === 'CREATED') return 'Awaiting QC'
   if (status === 'QC_PASSED') return 'QC passed / pay approved'
   if (status === 'QC_FAILED') return 'QC failed'
@@ -56,7 +58,7 @@ function itemStatus(status: string) {
   return status.replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, letter => letter.toUpperCase())
 }
 
-export default function GarmentHistory({ itemId }: { itemId: string }) {
+export default function GarmentHistory({ itemId, readOnly = false, onReadyChange }: { itemId: string; readOnly?: boolean; onReadyChange?: (ready: boolean) => void }) {
   const [history, setHistory] = useState<History | null>(null)
   const [error, setError] = useState('')
   const [correcting, setCorrecting] = useState<{ task: Task; item: HistoryItem } | null>(null)
@@ -72,12 +74,14 @@ export default function GarmentHistory({ itemId }: { itemId: string }) {
 
   useEffect(() => {
     let active = true
+    onReadyChange?.(false)
     void createClient().rpc('get_garment_work_history', { p_item_id: itemId }).then(({ data, error: loadError }) => {
       if (!active) return
       if (loadError) setError(loadError.message)
       else {
         const loaded = data as History
         setHistory(loaded)
+        onReadyChange?.(true)
         const ids = loaded.items.flatMap(item => item.tasks.map(task => task.id))
         if (ids.length) void createClient().from('work_assignment_corrections').select('id, assignment_id, note, status, created_at, review_reason').in('assignment_id', ids).order('created_at').then(({ data: rows }) => {
           if (active) setCorrections((rows || []) as Correction[])
@@ -85,15 +89,16 @@ export default function GarmentHistory({ itemId }: { itemId: string }) {
       }
     })
     return () => { active = false }
-  }, [itemId])
+  }, [itemId, onReadyChange])
 
   useEffect(() => {
+    if (readOnly) return
     let active = true
     void Promise.all([db.getRates(), db.getTailors()]).then(([rateRows, tailorRows]) => {
       if (active) { setRates(rateRows); setTailors(tailorRows) }
     }).catch(cause => { if (active) setError(cause.message || 'Could not load correction options.') })
     return () => { active = false }
-  }, [])
+  }, [readOnly])
 
   function openCorrection(task: Task, item: HistoryItem) {
     setCorrecting({ task, item })
@@ -135,7 +140,7 @@ export default function GarmentHistory({ itemId }: { itemId: string }) {
   return <div className="space-y-5">
     {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
     {saved && <p className="text-sm text-emerald-700">Correction submitted for Customer Service review.</p>}
-    {correcting && <div className="space-y-3 border-b border-gray-200 pb-5">
+    {!readOnly && correcting && <div className="space-y-3 border-b border-gray-200 pb-5">
       <h4 className="font-medium">Correct {correcting.item.item_key}: {correcting.task.task}</h4>
       <div className="grid gap-3 sm:grid-cols-3">
         <label className="text-xs font-medium text-gray-600">Category<select value={categoryId} onChange={event => { setCategoryId(event.target.value); setTaskId('') }} className="mt-1 w-full rounded-md border border-gray-300 p-2 text-sm">{categories.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>
@@ -164,12 +169,12 @@ export default function GarmentHistory({ itemId }: { itemId: string }) {
       </div>}
       {item.tasks.length > 0 ? <div className="space-y-2">
         <h5 className="text-xs font-semibold uppercase text-gray-500">Tasks</h5>
-        <Table headers={['Category / Task', 'Tailor', 'QC / Payment', 'Pay']} className="" tableClassName="">
+        <Table headers={['Category / Task', 'Tailor', 'Status', 'Pay']} className="" tableClassName="">
           {item.tasks.map(task => <TableRow key={task.id} className="" onClick={undefined}>
             <TableCell className=""><span className="font-medium">{task.task || '-'}</span><span className="block text-xs text-gray-500">{task.category || '-'}</span></TableCell>
             <TableCell className="">{task.tailor || '-'}</TableCell>
-            <TableCell className=""><Badge className="" variant={statusVariant(task.status)}>{taskStatus(task.status)}</Badge><span className="mt-1 block text-xs text-gray-500">{new Date(task.updated_at).toLocaleString()}</span></TableCell>
-            <TableCell className="text-right">{formatMoney(Number(task.pay_amount || 0))}{task.status === 'CREATED' && (task.amendment_occurrence_id || item.replacement_of_item_id) && <button type="button" onClick={() => openCorrection(task, item)} className="ml-2 text-xs text-maison-primary underline">Correct</button>}</TableCell>
+            <TableCell className=""><Badge className="" variant={statusVariant(task.status)}>{taskStatus(task.status, Boolean(task.amendment_occurrence_id))}</Badge><span className="mt-1 block text-xs text-gray-500">{new Date(task.updated_at).toLocaleString()}</span></TableCell>
+            <TableCell className="text-right">{formatMoney(Number(task.pay_amount || 0))}{!readOnly && task.status === 'CREATED' && (task.amendment_occurrence_id || item.replacement_of_item_id) && <button type="button" onClick={() => openCorrection(task, item)} className="ml-2 text-xs text-maison-primary underline">Correct</button>}</TableCell>
           </TableRow>)}
         </Table>
       </div> : item.amendments.length === 0 && !item.request_note && <p className="border-t border-gray-100 pt-4 text-sm text-gray-500">No work recorded for this item.</p>}

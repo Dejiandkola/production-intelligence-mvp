@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/client'
 import type { ProposedAssignment, WorkRequest } from './types'
 import { amendmentLabel } from '@/lib/amendment-label'
 import ReplacementTag from '@/components/Requests/ReplacementTag'
+import GarmentHistory from '@/components/Requests/GarmentHistory'
 
 export type ItemOption = {
   id: string
@@ -144,6 +145,7 @@ export default function RequestForm({
   const [searching, setSearching] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [historyReady, setHistoryReady] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -231,7 +233,7 @@ export default function RequestForm({
         <input id="garment-search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search ticket number or item key" className="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm" />
         {searching && <p className="mt-1 text-xs text-gray-600">Searching...</p>}
         {matches.length > 0 && <div className="mt-2 max-h-48 overflow-y-auto border-y border-gray-200">
-          {matches.map(match => <button key={match.id} type="button" onClick={() => { setItem(match); setMatches([]); setQuery(''); setGroups([emptyGroup()]) }} className="block w-full border-b border-gray-100 px-2 py-2 text-left text-sm hover:bg-gray-50">
+          {matches.map(match => <button key={match.id} type="button" onClick={() => { setItem(match); setHistoryReady(false); setMatches([]); setQuery(''); setGroups([emptyGroup()]) }} className="block w-full border-b border-gray-100 px-2 py-2 text-left text-sm hover:bg-gray-50">
             <span className="font-medium">{match.item_key}</span> · {match.ticket_number} · {match.customer_name || 'Customer'} · {match.product_type_name || 'Garment'}
           </button>)}
         </div>}
@@ -243,6 +245,12 @@ export default function RequestForm({
           <p className="mt-1 text-sm text-maison-secondary">Ticket: {item.ticket_number} | Customer: {item.customer_name || 'Customer'}</p>
         </div>
       </div>}
+      {item && <section aria-label="Item history" className="space-y-2 border-y border-gray-200 py-4">
+        <h3 className="text-sm font-semibold text-maison-primary">Item history</h3>
+        <div className="max-h-72 overflow-y-auto pr-2">
+          <GarmentHistory key={item.id} itemId={item.id} readOnly onReadyChange={setHistoryReady} />
+        </div>
+      </section>}
       {(request || !selectedItem) && <label className="block text-sm font-medium text-maison-secondary">Type
         <select value={kind} onChange={event => { setKind(event.target.value as 'AMENDMENT' | 'REPLACEMENT'); setGroups([emptyGroup()]) }} className="mt-1.5 block w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-maison-primary/20">
           <option value="AMENDMENT">Amendment</option>
@@ -286,7 +294,7 @@ export default function RequestForm({
       </div>
       <div className="flex flex-wrap justify-end gap-2 border-t border-gray-100 pt-4">
         {inModal && <button type="button" onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-medium text-maison-secondary hover:bg-gray-100">Cancel</button>}
-        <button type="submit" disabled={saving || loadingOptions || !item} className="rounded-lg bg-maison-primary px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-black disabled:opacity-50">{saving ? 'Saving...' : request ? 'Save Changes' : 'Submit Request'}</button>
+        <button type="submit" disabled={saving || loadingOptions || !item || !historyReady} className="rounded-lg bg-maison-primary px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-black disabled:opacity-50">{saving ? 'Saving...' : request ? 'Save Changes' : kind === 'AMENDMENT' ? 'Assign Amendment' : 'Submit Request'}</button>
       </div>
     </form>
   )

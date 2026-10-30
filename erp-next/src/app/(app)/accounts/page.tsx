@@ -415,6 +415,9 @@ export default function PendingVerification() {
 
     const renderStatusCell = (task) => {
         if (task.status === 'CREATED' || task.status === 'REVERSED') {
+            if (task.amendment_occurrence_id && task.status === 'CREATED') {
+                return <Badge variant="warning">Awaiting completion confirmation</Badge>;
+            }
             return (
                 <div className="space-y-2">
                     {hasReversalRecord(task) && (
@@ -451,7 +454,7 @@ export default function PendingVerification() {
             return (
                 <div className="space-y-2">
                     <Badge variant={getStatusVariant(task.status, hasReversalRecord(task))}>
-                        {getStatusLabel(task)}
+                        {task.amendment_occurrence_id && task.status === 'Approved' ? 'Completed' : getStatusLabel(task)}
                     </Badge>
                     <div>
                         {task.status === 'Approved' && <Button size="sm" onClick={() => void handleRecordPayment(task)}>Record Payment</Button>}

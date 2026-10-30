@@ -37,7 +37,7 @@ const select = '*, items!work_change_requests_item_id_fkey(item_key, status, pro
 export default function CustomerServiceRequestsClient({ userId, canReview }: { userId: string; canReview: boolean }) {
   const selectionToken = useRef(0)
   const [requests, setRequests] = useState<WorkRequest[]>([])
-  const [requestTab, setRequestTab] = useState<'AMENDMENT' | 'REPLACEMENT'>('AMENDMENT')
+  const [requestTab, setRequestTab] = useState<'AMENDMENT' | 'REPLACEMENT'>('REPLACEMENT')
   const [corrections, setCorrections] = useState<Correction[]>([])
   const [selected, setSelected] = useState<WorkRequest | null>(null)
   const [revisions, setRevisions] = useState<Revision[]>([])
@@ -170,17 +170,18 @@ export default function CustomerServiceRequestsClient({ userId, canReview }: { u
     <div className="flex items-center justify-between gap-3">
       <div>
         <h1 className="font-serif text-2xl text-maison-primary">Pending Requests</h1>
-        <p className="text-sm text-maison-secondary">Amendments, replacements, and assignment corrections awaiting review.</p>
+        <p className="text-sm text-maison-secondary">Replacements, earlier pending amendments, and assignment corrections awaiting review.</p>
       </div>
       <Button type="button" variant="secondary" size="sm" className="" isLoading={false} disabled={false} onClick={() => { closeRequest(); void load() }} aria-label="Refresh requests" title="Refresh requests"><RefreshCw className="h-4 w-4" /></Button>
     </div>
     {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
 
     <section className="space-y-3">
-      <div role="tablist" aria-label="Request type" className="flex gap-2">
-        {([{ kind: 'AMENDMENT', label: 'Amendments', count: amendmentCount }, { kind: 'REPLACEMENT', label: 'Replacements', count: replacementCount }] as const).map(tab => <button key={tab.kind} type="button" role="tab" id={`requests-tab-${tab.kind.toLowerCase()}`} aria-selected={requestTab === tab.kind} aria-controls="pending-work-requests" onClick={() => setRequestTab(tab.kind)} className={requestTab === tab.kind ? 'inline-flex items-center gap-2 rounded-md bg-maison-primary px-4 py-2 text-sm font-medium text-white shadow-sm' : 'inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white px-4 py-2 text-sm text-maison-secondary hover:bg-gray-50'}>{tab.label}<span className={requestTab === tab.kind ? 'text-white/70' : 'text-gray-500'}>{tab.count}</span></button>)}
-      </div>
-      <div id="pending-work-requests" role="tabpanel" aria-labelledby={`requests-tab-${requestTab.toLowerCase()}`}>
+      {amendmentCount > 0 && <div role="tablist" aria-label="Request type" className="flex gap-2">
+        {([{ kind: 'REPLACEMENT', label: 'Replacements', count: replacementCount }, { kind: 'AMENDMENT', label: 'Earlier Amendments', count: amendmentCount }] as const).map(tab => <button key={tab.kind} type="button" role="tab" id={`requests-tab-${tab.kind.toLowerCase()}`} aria-selected={requestTab === tab.kind} aria-controls="pending-work-requests" onClick={() => setRequestTab(tab.kind)} className={requestTab === tab.kind ? 'inline-flex items-center gap-2 rounded-md bg-maison-primary px-4 py-2 text-sm font-medium text-white shadow-sm' : 'inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white px-4 py-2 text-sm text-maison-secondary hover:bg-gray-50'}>{tab.label}<span className={requestTab === tab.kind ? 'text-white/70' : 'text-gray-500'}>{tab.count}</span></button>)}
+      </div>}
+      {amendmentCount === 0 && <h2 className="font-serif text-lg text-maison-primary">Replacements <span className="ml-2 font-sans text-sm font-normal text-maison-secondary">{replacementCount}</span></h2>}
+      <div id="pending-work-requests" role={amendmentCount > 0 ? 'tabpanel' : undefined} aria-labelledby={amendmentCount > 0 ? `requests-tab-${requestTab.toLowerCase()}` : undefined}>
       <Table headers={['Ticket', 'Customer', 'Item', 'Type', 'Note', 'Submitted', 'Actions']} className="" tableClassName="">
         {visibleRequests.map(request => <TableRow key={request.id} className="" onClick={undefined}>
           <TableCell className="font-mono text-xs">{request.items?.tickets?.ticket_number || '-'}</TableCell>
@@ -191,7 +192,7 @@ export default function CustomerServiceRequestsClient({ userId, canReview }: { u
           <TableCell className="text-gray-500">{format(new Date(request.created_at), 'MMM d, yyyy')}</TableCell>
           <TableCell className=""><Button type="button" variant="secondary" size="sm" className="" isLoading={false} disabled={false} onClick={() => void selectRequest(request)}>Review</Button></TableCell>
         </TableRow>)}
-        {visibleRequests.length === 0 && <TableRow className="" onClick={undefined}><td colSpan={7} className="px-6 py-10 text-center text-sm text-gray-500">No pending {requestTab === 'AMENDMENT' ? 'amendments' : 'replacements'}.</td></TableRow>}
+        {visibleRequests.length === 0 && <TableRow className="" onClick={undefined}><td colSpan={7} className="px-6 py-10 text-center text-sm text-gray-500">No pending {requestTab === 'AMENDMENT' ? 'earlier amendments' : 'replacements'}.</td></TableRow>}
       </Table>
       </div>
     </section>
@@ -264,12 +265,11 @@ export default function CustomerServiceRequestsClient({ userId, canReview }: { u
           {revisions.map(revision => <p key={revision.id} className="text-xs text-gray-600">Version {revision.version} / {revision.action.toLowerCase()} / {format(new Date(revision.created_at), 'MMM d, yyyy, h:mm a')}{revision.actor_user_id === userId ? ' / You' : ''}</p>)}
         </div>
         {canReview && <div className="space-y-3 border-t border-gray-200 pt-4">
-          {selected.created_by === userId && <p className="text-xs text-gray-600">A different Customer Service user must review this request.</p>}
           {rejecting && <label className="block text-sm font-medium">Reason<textarea required value={reason} onChange={event => setReason(event.target.value)} rows={2} className="mt-1 w-full rounded-md border border-gray-300 p-2" /></label>}
           <div className="flex flex-wrap justify-end gap-2">
             <Button type="button" variant="secondary" className="" isLoading={false} disabled={false} onClick={() => setEditing(true)}>Edit</Button>
-            <Button type="button" variant="secondary" className="" isLoading={false} disabled={saving || selected.created_by === userId} onClick={() => setRejecting(true)}>Reject</Button>
-            {rejecting ? <Button type="button" variant="danger" className="" isLoading={false} disabled={saving || !reason.trim() || selected.created_by === userId} onClick={() => void review('REJECTED')}>Confirm Rejection</Button> : <Button type="button" className="" isLoading={false} disabled={saving || !workHistory || selected.created_by === userId} onClick={() => void review('APPROVED')}>Approve</Button>}
+            <Button type="button" variant="secondary" className="" isLoading={false} disabled={saving} onClick={() => setRejecting(true)}>Reject</Button>
+            {rejecting ? <Button type="button" variant="danger" className="" isLoading={false} disabled={saving || !reason.trim()} onClick={() => void review('REJECTED')}>Confirm Rejection</Button> : <Button type="button" className="" isLoading={false} disabled={saving || !workHistory} onClick={() => void review('APPROVED')}>Approve</Button>}
           </div>
         </div>}
       </div>)}

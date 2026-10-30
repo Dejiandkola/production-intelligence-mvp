@@ -104,6 +104,7 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
 
     const activeCategorySearch = editingTask ? editCategorySearch : newCategorySearch;
     const filteredCategories = availableCategories.filter(c =>
+        (editingTask || c.name?.toLowerCase() !== 'amendment') &&
         c.name?.toLowerCase().includes(activeCategorySearch.trim().toLowerCase())
     );
 
@@ -167,6 +168,11 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
 
     const handleCreateTask = async (e) => {
         e.preventDefault();
+
+        if (isAmendmentCategory) {
+            alert('Record amendments through Consultants or Customer Service.');
+            return;
+        }
 
         if (item?.approved_work_change_request_id) {
             alert('Tasks on approved replacements are set by the approved request. Submit a correction for an existing task instead.');
@@ -775,7 +781,7 @@ export default function ManageItemTasks({ itemId: propItemId, onClose, canManage
                             <TableCell>{formatMoney(task.pay_amount)}</TableCell>
                             <TableCell>
                                 <Badge variant={task.status === 'Approved' || task.status === 'PAID' ? 'success' : task.status === 'Rejected' ? 'danger' : 'warning'}>
-                                    {task.status}
+                                    {task.amendment_occurrence_id && task.status === 'Approved' ? 'Completed by Consultant / Customer Service' : task.amendment_occurrence_id && task.status === 'CREATED' ? 'In progress' : task.status}
                                 </Badge>
                             </TableCell>
                             <TableCell className="text-gray-400 text-xs">

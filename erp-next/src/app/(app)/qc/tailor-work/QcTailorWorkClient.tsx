@@ -553,7 +553,7 @@ export default function QcTailorWorkClient({ permissions = [] }: { permissions?:
                                                 </TableCell>
                                                 <TableCell>
                                                     <Badge variant={getTaskStatusVariant(task.raw_status || task.status)}>
-                                                        {getTaskStatusLabel(task.raw_status || task.status)}
+                                                        {task.amendment_occurrence_id && (task.raw_status === 'QC_PASSED' || task.status === 'Approved') ? 'Completed by Consultant / Customer Service' : getTaskStatusLabel(task.raw_status || task.status)}
                                                     </Badge>
                                                 </TableCell>
                                                 <TableCell>
