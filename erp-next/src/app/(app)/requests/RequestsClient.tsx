@@ -13,6 +13,7 @@ import RequestForm, { type ItemOption } from '@/components/Requests/RequestForm'
 import type { WorkRequest } from '@/components/Requests/types'
 import { amendmentLabel } from '@/lib/amendment-label'
 import ReplacementTag from '@/components/Requests/ReplacementTag'
+import GarmentHistory from '@/components/Requests/GarmentHistory'
 
 type Garment = ItemOption & { ticket_id: string; created_at?: string; replacement_of_item_id?: string | null; replacement_origin_key?: string | null; work_assignments?: { category_types?: { name?: string } }[] }
 type AmendmentTask = { id: string; status: string; task_types: { name: string } | { name: string }[] | null }
@@ -76,6 +77,7 @@ export default function RequestsClient({ userId, canEditAnyRequest }: { userId: 
   const [loadingMoreRequests, setLoadingMoreRequests] = useState(false)
   const [hasMoreRequests, setHasMoreRequests] = useState(false)
   const [editing, setEditing] = useState<FormState>(null)
+  const [correctingRequest, setCorrectingRequest] = useState<ListedRequest | null>(null)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [expandedRequests, setExpandedRequests] = useState<Record<string, boolean>>({})
   const [error, setError] = useState('')
@@ -311,6 +313,12 @@ export default function RequestsClient({ userId, canEditAnyRequest }: { userId: 
     </div>
     {view === 'browse' && error && <p role="alert" className="text-sm text-red-700">{error}</p>}
     {view === 'requests' && requestsError && <p role="alert" className="text-sm text-red-700">{requestsError}</p>}
+    <Modal isOpen={Boolean(correctingRequest)} onClose={() => setCorrectingRequest(null)} title="Correct assignment" maxWidth="max-w-4xl" scrollable>
+      {correctingRequest && <>
+        <p className="mb-4 text-sm text-gray-600">Choose a task to correct its task or tailor. Give a reason and submit it for Customer Service review.</p>
+        <GarmentHistory key={correctingRequest.id} itemId={correctingRequest.item_id} amendmentOccurrenceId={correctingRequest.approved_snapshot?.amendment_occurrence_id} />
+      </>}
+    </Modal>
     <Modal isOpen={Boolean(editing)} onClose={() => setEditing(null)} title="" maxWidth="max-w-4xl" scrollable>
       {editing && <RequestForm key={selectedRequest?.id || `${selectedGarment?.id}-${selectedKind}`} request={selectedRequest} selectedItem={selectedGarment} initialKind={selectedKind} inModal onCancel={() => setEditing(null)} onSaved={() => { setEditing(null); setView('requests'); void loadRequests() }} />}
     </Modal>
@@ -431,7 +439,11 @@ export default function RequestsClient({ userId, canEditAnyRequest }: { userId: 
                       <ChevronDown aria-hidden="true" className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 opacity-60" />
                     </span> : <Badge className="" variant={request.status === 'APPROVED' ? 'success' : request.status === 'REJECTED' ? 'danger' : 'warning'}>{request.status === 'PENDING' ? 'Pending' : request.status === 'REJECTED' ? 'Rejected' : 'Approved'}</Badge>}
                   </TableCell>
-                  <TableCell className="">{request.status === 'PENDING' && (request.created_by === userId || canEditAnyRequest) && <button type="button" onClick={() => setEditing(request)} aria-label={`Edit request for ${request.items?.item_key || 'item'}`} title="Edit request" className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-maison-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-maison-primary"><Pencil className="h-4 w-4" /></button>}</TableCell>
+                  <TableCell className="">
+                    {request.kind === 'AMENDMENT' && request.status === 'APPROVED' && completionStatus === 'CREATED' && request.approved_snapshot?.amendment_occurrence_id && <button type="button" disabled={Boolean(updatingRequestId)} onClick={() => setCorrectingRequest(request)} className="text-sm text-maison-primary underline disabled:opacity-50">Correct assignment</button>}
+                    {request.kind === 'AMENDMENT' && request.status === 'APPROVED' && ['QC_PASSED', 'MIXED'].includes(completionStatus) && <span className="text-xs text-gray-500">Return to In progress to correct an assignment.</span>}
+                    {request.status === 'PENDING' && (request.created_by === userId || canEditAnyRequest) && <button type="button" onClick={() => setEditing(request)} aria-label={`Edit request for ${request.items?.item_key || 'item'}`} title="Edit request" className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-maison-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-maison-primary"><Pencil className="h-4 w-4" /></button>}
+                  </TableCell>
                 </TableRow>
               })}
             </Table>}

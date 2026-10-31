@@ -58,7 +58,7 @@ function itemStatus(status: string) {
   return status.replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, letter => letter.toUpperCase())
 }
 
-export default function GarmentHistory({ itemId, readOnly = false, onReadyChange }: { itemId: string; readOnly?: boolean; onReadyChange?: (ready: boolean) => void }) {
+export default function GarmentHistory({ itemId, readOnly = false, onReadyChange, amendmentOccurrenceId }: { itemId: string; readOnly?: boolean; onReadyChange?: (ready: boolean) => void; amendmentOccurrenceId?: string }) {
   const [history, setHistory] = useState<History | null>(null)
   const [error, setError] = useState('')
   const [correcting, setCorrecting] = useState<{ task: Task; item: HistoryItem } | null>(null)
@@ -150,7 +150,10 @@ export default function GarmentHistory({ itemId, readOnly = false, onReadyChange
       <label className="block text-xs font-medium text-gray-600">Reason<textarea value={note} onChange={event => setNote(event.target.value)} rows={2} className="mt-1 w-full rounded-md border border-gray-300 p-2 text-sm" /></label>
       <div className="flex gap-2"><button type="button" disabled={saving || !note.trim() || !categoryId || !taskId || !tailorId} onClick={() => void submitCorrection()} className="rounded-md bg-maison-primary px-3 py-2 text-sm text-white disabled:opacity-50">Submit correction</button><button type="button" onClick={() => setCorrecting(null)} className="rounded-md border border-gray-300 px-3 py-2 text-sm">Cancel</button></div>
     </div>}
-    {history.items.map(item => <section key={item.id} className="space-y-4 border-b border-gray-200 pb-5 last:border-b-0 last:pb-0">
+    {history.items.filter(item => !amendmentOccurrenceId || item.id === itemId).map(item => ({ ...item,
+      tasks: item.tasks.filter(task => !amendmentOccurrenceId || task.amendment_occurrence_id === amendmentOccurrenceId),
+      amendments: item.amendments.filter(amendment => !amendmentOccurrenceId || amendment.id === amendmentOccurrenceId),
+    })).map(item => <section key={item.id} className="space-y-4 border-b border-gray-200 pb-5 last:border-b-0 last:pb-0">
       <div>
         <div className="flex flex-wrap items-center gap-2">
           <h4 className="font-serif text-lg text-maison-primary">{item.item_key}</h4>
@@ -174,7 +177,7 @@ export default function GarmentHistory({ itemId, readOnly = false, onReadyChange
             <TableCell className=""><span className="font-medium">{task.task || '-'}</span><span className="block text-xs text-gray-500">{task.category || '-'}</span></TableCell>
             <TableCell className="">{task.tailor || '-'}</TableCell>
             <TableCell className=""><Badge className="" variant={statusVariant(task.status)}>{taskStatus(task.status, Boolean(task.amendment_occurrence_id))}</Badge><span className="mt-1 block text-xs text-gray-500">{new Date(task.updated_at).toLocaleString()}</span></TableCell>
-            <TableCell className="text-right">{formatMoney(Number(task.pay_amount || 0))}{!readOnly && task.status === 'CREATED' && (task.amendment_occurrence_id || item.replacement_of_item_id) && <button type="button" onClick={() => openCorrection(task, item)} className="ml-2 text-xs text-maison-primary underline">Correct</button>}</TableCell>
+            <TableCell className="text-right">{formatMoney(Number(task.pay_amount || 0))}{!readOnly && task.status === 'CREATED' && (task.amendment_occurrence_id || item.replacement_of_item_id) && <button type="button" disabled={saving || corrections.some(correction => correction.assignment_id === task.id && correction.status === 'PENDING')} onClick={() => openCorrection(task, item)} className="ml-2 text-xs text-maison-primary underline disabled:opacity-50">{corrections.some(correction => correction.assignment_id === task.id && correction.status === 'PENDING') ? 'Correction pending' : 'Correct'}</button>}</TableCell>
           </TableRow>)}
         </Table>
       </div> : item.amendments.length === 0 && !item.request_note && <p className="border-t border-gray-100 pt-4 text-sm text-gray-500">No work recorded for this item.</p>}
