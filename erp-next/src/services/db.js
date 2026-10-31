@@ -3029,6 +3029,15 @@ async updateTicket(id, { customer_name }) {
             })
     },
 
+    async reviewAmendmentTask(taskId, action, reason = null) {
+        const ctx = await getContext()
+        requireAnyPermission(ctx, ['manage_payments', 'admin'])
+        const { error } = await supabase.rpc('review_amendment_task', {
+            p_assignment_id: taskId, p_action: action, p_reason: reason,
+        })
+        if (error) throw new Error(error.message)
+    },
+
     async verifyTask(taskId, status, reason = null) {
         const ctx = await getContext()
         requirePermission(ctx, 'manage_qc')

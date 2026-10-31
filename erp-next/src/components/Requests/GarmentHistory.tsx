@@ -18,6 +18,7 @@ type Task = {
   tailor: string | null
   status: string
   pay_amount: number | null
+  amendment_completed_at: string | null
   amendment_occurrence_id: string | null
   updated_at: string
 }
@@ -36,9 +37,9 @@ type HistoryItem = {
 type History = { root_item_id: string; items: HistoryItem[] }
 type Correction = { id: string; assignment_id: string; note: string; status: string; created_at: string; review_reason: string | null }
 
-function taskStatus(status: string, isAmendment: boolean) {
-  if (isAmendment && status === 'CREATED') return 'In progress'
-  if (isAmendment && status === 'QC_PASSED') return 'Completed'
+function taskStatus(status: string, isAmendment: boolean, completed: boolean) {
+  if (isAmendment && status === 'CREATED') return completed ? 'Completed / awaiting Accounts approval' : 'In progress'
+  if (isAmendment && status === 'QC_PASSED') return 'Accounts approved'
   if (status === 'CREATED') return 'Awaiting QC'
   if (status === 'QC_PASSED') return 'QC passed / pay approved'
   if (status === 'QC_FAILED') return 'QC failed'
@@ -176,8 +177,8 @@ export default function GarmentHistory({ itemId, readOnly = false, onReadyChange
           {item.tasks.map(task => <TableRow key={task.id} className="" onClick={undefined}>
             <TableCell className=""><span className="font-medium">{task.task || '-'}</span><span className="block text-xs text-gray-500">{task.category || '-'}</span></TableCell>
             <TableCell className="">{task.tailor || '-'}</TableCell>
-            <TableCell className=""><Badge className="" variant={statusVariant(task.status)}>{taskStatus(task.status, Boolean(task.amendment_occurrence_id))}</Badge><span className="mt-1 block text-xs text-gray-500">{new Date(task.updated_at).toLocaleString()}</span></TableCell>
-            <TableCell className="text-right">{formatMoney(Number(task.pay_amount || 0))}{!readOnly && task.status === 'CREATED' && (task.amendment_occurrence_id || item.replacement_of_item_id) && <button type="button" disabled={saving || corrections.some(correction => correction.assignment_id === task.id && correction.status === 'PENDING')} onClick={() => openCorrection(task, item)} className="ml-2 text-xs text-maison-primary underline disabled:opacity-50">{corrections.some(correction => correction.assignment_id === task.id && correction.status === 'PENDING') ? 'Correction pending' : 'Correct'}</button>}</TableCell>
+            <TableCell className=""><Badge className="" variant={statusVariant(task.status)}>{taskStatus(task.status, Boolean(task.amendment_occurrence_id), Boolean(task.amendment_completed_at))}</Badge><span className="mt-1 block text-xs text-gray-500">{new Date(task.updated_at).toLocaleString()}</span></TableCell>
+            <TableCell className="text-right">{formatMoney(Number(task.pay_amount || 0))}{!readOnly && !task.amendment_completed_at && task.status === 'CREATED' && (task.amendment_occurrence_id || item.replacement_of_item_id) && <button type="button" disabled={saving || corrections.some(correction => correction.assignment_id === task.id && correction.status === 'PENDING')} onClick={() => openCorrection(task, item)} className="ml-2 text-xs text-maison-primary underline disabled:opacity-50">{corrections.some(correction => correction.assignment_id === task.id && correction.status === 'PENDING') ? 'Correction pending' : 'Correct'}</button>}</TableCell>
           </TableRow>)}
         </Table>
       </div> : item.amendments.length === 0 && !item.request_note && <p className="border-t border-gray-100 pt-4 text-sm text-gray-500">No work recorded for this item.</p>}

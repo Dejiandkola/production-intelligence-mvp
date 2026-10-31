@@ -232,33 +232,25 @@ export default function PendingVerification() {
 
     const handleApprove = async (task) => {
         if (!window.confirm('Confirm payment approval for this task?')) return;
-        if (task.status === 'REVERSED') {
-            await db.reopenReversedTask(task.id);
-        }
-        await db.verifyTask(task.id, 'Approved');
-        await loadTasks();
-    };
-
-    const handleRecordPayment = async (task) => {
-        const reference = window.prompt('Enter the payment or transfer reference:');
-        if (!reference?.trim()) return;
-        if (!window.confirm(`Record ${formatMoney(task.pay_amount)} as paid to ${task.tailor_name || 'this tailor'}?`)) return;
         try {
-            await db.recordAssignmentDisbursement(task.id, reference.trim());
+            if (task.status === 'REVERSED') await db.reopenReversedTask(task.id);
+            await (task.amendment_occurrence_id ? db.reviewAmendmentTask(task.id, 'approve') : db.verifyTask(task.id, 'Approved'));
             await loadTasks();
         } catch (cause) {
-            alert(cause?.message || 'Could not record payment.');
+            alert(cause?.message || 'Could not approve this task.');
         }
     };
 
     const handleReject = async (task) => {
         const reason = window.prompt('Enter rejection reason:');
         if (!reason) return;
-        if (task.status === 'REVERSED') {
-            await db.reopenReversedTask(task.id);
+        try {
+            if (task.status === 'REVERSED') await db.reopenReversedTask(task.id);
+            await (task.amendment_occurrence_id ? db.reviewAmendmentTask(task.id, 'reject', reason) : db.verifyTask(task.id, 'Rejected', reason));
+            await loadTasks();
+        } catch (cause) {
+            alert(cause?.message || 'Could not reject this task.');
         }
-        await db.verifyTask(task.id, 'Rejected', reason);
-        await loadTasks();
     };
 
     const handleReverse = async (task) => {
@@ -268,8 +260,10 @@ export default function PendingVerification() {
 
         try {
             setReversingTaskId(task.id);
-            await db.reverseTask(task.id, reason);
+            await (task.amendment_occurrence_id ? db.reviewAmendmentTask(task.id, 'reverse', reason) : db.reverseTask(task.id, reason));
             await loadTasks();
+        } catch (cause) {
+            alert(cause?.message || 'Could not reverse this decision.');
         } finally {
             setReversingTaskId(null);
         }
@@ -415,7 +409,7 @@ export default function PendingVerification() {
 
     const renderStatusCell = (task) => {
         if (task.status === 'CREATED' || task.status === 'REVERSED') {
-            if (task.amendment_occurrence_id && task.status === 'CREATED') {
+            if (task.amendment_occurrence_id && !task.amendment_completed_at) {
                 return <Badge variant="warning">Awaiting completion confirmation</Badge>;
             }
             return (
@@ -430,7 +424,8 @@ export default function PendingVerification() {
                             </div>
                         </>
                     )}
-                    {canApproveQc && <div className="flex gap-2">
+                    {task.amendment_occurrence_id && <Badge variant="warning">Completed / awaiting approval</Badge>}
+                    {(canApproveQc || task.amendment_occurrence_id) && <div className="flex gap-2">
                         <Button
                             size="sm"
                             className="bg-emerald-600 text-white hover:bg-emerald-700"
@@ -454,11 +449,10 @@ export default function PendingVerification() {
             return (
                 <div className="space-y-2">
                     <Badge variant={getStatusVariant(task.status, hasReversalRecord(task))}>
-                        {task.amendment_occurrence_id && task.status === 'Approved' ? 'Completed' : getStatusLabel(task)}
+                        {task.amendment_occurrence_id && task.status === 'Approved' ? 'Accounts approved' : getStatusLabel(task)}
                     </Badge>
                     <div>
-                        {task.status === 'Approved' && <Button size="sm" onClick={() => void handleRecordPayment(task)}>Record Payment</Button>}
-                        {canApproveQc && <Button
+                        {(canApproveQc || task.amendment_occurrence_id) && <Button
                             size="sm"
                             variant="secondary"
                             isLoading={reversingTaskId === task.id}

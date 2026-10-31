@@ -16,7 +16,7 @@ import ReplacementTag from '@/components/Requests/ReplacementTag'
 import GarmentHistory from '@/components/Requests/GarmentHistory'
 
 type Garment = ItemOption & { ticket_id: string; created_at?: string; replacement_of_item_id?: string | null; replacement_origin_key?: string | null; work_assignments?: { category_types?: { name?: string } }[] }
-type AmendmentTask = { id: string; status: string; task_types: { name: string } | { name: string }[] | null }
+type AmendmentTask = { id: string; status: string; amendment_completed_at: string | null; task_types: { name: string } | { name: string }[] | null }
 type ListedRequest = WorkRequest & { submitted_by: string; amendment_tasks: AmendmentTask[] }
 type FormState = { item: Garment; kind: 'AMENDMENT' | 'REPLACEMENT' } | WorkRequest | null
 type Filters = { ticketId: string; customerName: string; productType: string; status: string; startDate: string; endDate: string }
@@ -53,9 +53,9 @@ function amendmentCompletionStatus(tasks: AmendmentTask[]) {
   if (!tasks.length) return 'NO_TASKS'
   if (tasks.every(task => task.status === 'PAID')) return 'PAID'
   if (tasks.some(task => task.status === 'PAID')) return 'PARTIALLY_PAID'
-  if (tasks.some(task => !['CREATED', 'QC_PASSED'].includes(task.status))) return 'LOCKED'
-  if (tasks.every(task => task.status === 'CREATED')) return 'CREATED'
-  if (tasks.every(task => task.status === 'QC_PASSED')) return 'QC_PASSED'
+  if (tasks.some(task => !['CREATED', 'QC_PASSED', 'QC_FAILED', 'REVERSED'].includes(task.status))) return 'LOCKED'
+  if (tasks.every(task => Boolean(task.amendment_completed_at))) return 'COMPLETED'
+  if (tasks.every(task => !task.amendment_completed_at)) return 'CREATED'
   return 'MIXED'
 }
 
@@ -115,7 +115,7 @@ export default function RequestsClient({ userId, canEditAnyRequest }: { userId: 
       supabase.from('profiles').select('user_id, full_name, email')
         .in('user_id', [...new Set(rows.map(request => request.created_by))]),
       occurrenceIds.length
-        ? supabase.from('work_assignments').select('id, amendment_occurrence_id, status, task_types(name)')
+        ? supabase.from('work_assignments').select('id, amendment_occurrence_id, status, amendment_completed_at, task_types(name)')
           .in('amendment_occurrence_id', occurrenceIds)
         : Promise.resolve({ data: [], error: null }),
     ])
@@ -176,8 +176,8 @@ export default function RequestsClient({ userId, canEditAnyRequest }: { userId: 
   async function setRequestCompletion(request: ListedRequest, completed: boolean) {
     if (updatingRequestId) return
     const message = completed
-      ? `Confirm all ${request.amendment_tasks.length} amendment tasks are complete? Accounts will be able to pay for them.`
-      : 'Return this amendment to In progress? Its tasks will no longer be eligible for payment.'
+      ? `Confirm all ${request.amendment_tasks.length} amendment tasks are complete? Accounts will still need to approve or reject them.`
+      : 'Return this amendment to In progress? Its tasks will no longer be ready for Accounts approval.'
     if (!window.confirm(message)) return
     setUpdatingRequestId(request.id)
     setRequestsError('')
@@ -191,21 +191,21 @@ export default function RequestsClient({ userId, canEditAnyRequest }: { userId: 
       return
     }
 
-    const status = completed ? 'QC_PASSED' : 'CREATED'
+    const amendment_completed_at = completed ? new Date().toISOString() : null
     setRequests(current => current.map(row => row.id === request.id
-      ? { ...row, amendment_tasks: row.amendment_tasks.map(task => ({ ...task, status })) }
+      ? { ...row, amendment_tasks: row.amendment_tasks.map(task => ({ ...task, amendment_completed_at })) }
       : row))
 
     const occurrenceId = request.approved_snapshot?.amendment_occurrence_id
     if (occurrenceId) {
       const { data, error: refreshError } = await supabase.from('work_assignments')
-        .select('id, status').eq('amendment_occurrence_id', occurrenceId)
+        .select('id, status, amendment_completed_at').eq('amendment_occurrence_id', occurrenceId)
       if (refreshError) {
         setRequestsError('Status changed, but task details could not be refreshed.')
       } else {
-        const statuses = new Map((data || []).map(task => [task.id, task.status]))
+        const statuses = new Map((data || []).map(task => [task.id, task]))
         setRequests(current => current.map(row => row.id === request.id
-          ? { ...row, amendment_tasks: row.amendment_tasks.map(task => ({ ...task, status: statuses.get(task.id) || task.status })) }
+          ? { ...row, amendment_tasks: row.amendment_tasks.map(task => ({ ...task, ...statuses.get(task.id) })) }
           : row))
       }
     }
@@ -412,7 +412,7 @@ export default function RequestsClient({ userId, canEditAnyRequest }: { userId: 
             {isExpanded && <Table headers={['Item', 'Type', 'Note / Task', 'Submitted by', 'Submitted', 'Status', 'Actions']} className="" tableClassName="">
               {group.requests.map(request => {
                 const completionStatus = amendmentCompletionStatus(request.amendment_tasks)
-                const canUpdateCompletion = request.kind === 'AMENDMENT' && request.status === 'APPROVED' && ['CREATED', 'QC_PASSED', 'MIXED'].includes(completionStatus)
+                const canUpdateCompletion = request.kind === 'AMENDMENT' && request.status === 'APPROVED' && ['CREATED', 'COMPLETED', 'MIXED'].includes(completionStatus) && request.amendment_tasks.every(task => task.status === 'CREATED')
                 return <TableRow key={request.id} className="" onClick={undefined}>
                   <TableCell className="font-mono text-xs"><span className="block">{request.items?.item_key || '-'}</span>{request.replacement_of_item_id && <ReplacementTag originalItemKey={request.replacement_origin_key} className="mt-1" />}</TableCell>
                   <TableCell className=""><Badge className="" variant={request.kind === 'AMENDMENT' ? 'warning' : 'brand'}>{request.kind === 'AMENDMENT' ? amendmentLabel(request.amendment_ordinal) : 'Replacement'}</Badge></TableCell>
@@ -425,11 +425,11 @@ export default function RequestsClient({ userId, canEditAnyRequest }: { userId: 
                         aria-label={`${request.items?.item_key || 'Item'} amendment status`}
                         value={completionStatus}
                         disabled={Boolean(updatingRequestId) || !canUpdateCompletion}
-                        onChange={event => void setRequestCompletion(request, event.target.value === 'QC_PASSED')}
-                        className={`h-9 w-full appearance-none rounded-lg border px-3 pr-8 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-maison-primary/20 disabled:cursor-not-allowed disabled:opacity-70 ${completionStatus === 'CREATED' ? 'border-sky-200 bg-sky-50 text-sky-800' : completionStatus === 'QC_PASSED' || completionStatus === 'PAID' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-gray-200 bg-gray-50 text-gray-600'}`}
+                        onChange={event => void setRequestCompletion(request, event.target.value === 'COMPLETED')}
+                        className={`h-9 w-full appearance-none rounded-lg border px-3 pr-8 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-maison-primary/20 disabled:cursor-not-allowed disabled:opacity-70 ${completionStatus === 'CREATED' ? 'border-sky-200 bg-sky-50 text-sky-800' : completionStatus === 'COMPLETED' || completionStatus === 'PAID' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-gray-200 bg-gray-50 text-gray-600'}`}
                       >
                         <option value="CREATED">In progress</option>
-                        <option value="QC_PASSED">Completed</option>
+                        <option value="COMPLETED">Completed</option>
                         {completionStatus === 'MIXED' && <option value="MIXED">Partly completed</option>}
                         {completionStatus === 'PAID' && <option value="PAID">Paid</option>}
                         {completionStatus === 'PARTIALLY_PAID' && <option value="PARTIALLY_PAID">Partly paid</option>}
@@ -440,8 +440,8 @@ export default function RequestsClient({ userId, canEditAnyRequest }: { userId: 
                     </span> : <Badge className="" variant={request.status === 'APPROVED' ? 'success' : request.status === 'REJECTED' ? 'danger' : 'warning'}>{request.status === 'PENDING' ? 'Pending' : request.status === 'REJECTED' ? 'Rejected' : 'Approved'}</Badge>}
                   </TableCell>
                   <TableCell className="">
-                    {request.kind === 'AMENDMENT' && request.status === 'APPROVED' && completionStatus === 'CREATED' && request.approved_snapshot?.amendment_occurrence_id && <button type="button" disabled={Boolean(updatingRequestId)} onClick={() => setCorrectingRequest(request)} className="text-sm text-maison-primary underline disabled:opacity-50">Correct assignment</button>}
-                    {request.kind === 'AMENDMENT' && request.status === 'APPROVED' && ['QC_PASSED', 'MIXED'].includes(completionStatus) && <span className="text-xs text-gray-500">Return to In progress to correct an assignment.</span>}
+                    {request.kind === 'AMENDMENT' && request.status === 'APPROVED' && completionStatus === 'CREATED' && request.amendment_tasks.every(task => task.status === 'CREATED') && request.approved_snapshot?.amendment_occurrence_id && <button type="button" disabled={Boolean(updatingRequestId)} onClick={() => setCorrectingRequest(request)} className="text-sm text-maison-primary underline disabled:opacity-50">Correct assignment</button>}
+                    {request.kind === 'AMENDMENT' && request.status === 'APPROVED' && ['COMPLETED', 'MIXED'].includes(completionStatus) && <span className="text-xs text-gray-500">{request.amendment_tasks.every(task => task.status === 'CREATED') ? 'Return to In progress to correct an assignment.' : 'Accounts must reverse its decision before completion or assignments can change.'}</span>}
                     {request.status === 'PENDING' && (request.created_by === userId || canEditAnyRequest) && <button type="button" onClick={() => setEditing(request)} aria-label={`Edit request for ${request.items?.item_key || 'item'}`} title="Edit request" className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-maison-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-maison-primary"><Pencil className="h-4 w-4" /></button>}
                   </TableCell>
                 </TableRow>

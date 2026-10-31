@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:amendment-accounts": "node --test supabase/tests/amendment_accounts.test.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.8.0",
@@ -20,6 +21,7 @@
     "tailwind-merge": "^3.5.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.14",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
