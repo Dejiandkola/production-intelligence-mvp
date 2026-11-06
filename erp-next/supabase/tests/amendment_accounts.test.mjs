@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { PGlite } from '@electric-sql/pglite'
 
 const id = n => `00000000-0000-0000-0000-${String(n).padStart(12, '0')}`
-const migration = await readFile(new URL('../migrations/20261031151157_separate_amendment_completion_from_accounts.sql', import.meta.url), 'utf8')
+const migration = await readFile(new URL('../migrations/036_separate_amendment_completion_from_accounts.sql', import.meta.url), 'utf8')
 const paymentMigration = await readFile(new URL('../migrations/028_assignment_disbursements.sql', import.meta.url), 'utf8')
 const invariantStart = paymentMigration.indexOf('CREATE OR REPLACE FUNCTION public.enforce_work_assignment_invariants()')
 const paymentInvariant = paymentMigration.slice(invariantStart, paymentMigration.indexOf('\n$$;', invariantStart) + 4)

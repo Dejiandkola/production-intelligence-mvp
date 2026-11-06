@@ -1,21 +1,34 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
+const openModals = [];
+let previousOverflow = '';
+
 export function Modal({ isOpen, onClose, title, children, maxWidth = 'max-w-lg', scrollable = false }) {
+    const modalId = useRef(Symbol('modal'));
+    const closeRef = useRef(onClose);
+    useEffect(() => { closeRef.current = onClose; }, [onClose]);
     useEffect(() => {
+        if (!isOpen) return;
+        const id = modalId.current;
+        if (!openModals.length) previousOverflow = document.body.style.overflow;
+        openModals.push(id);
+        document.body.style.overflow = 'hidden';
         const handleEsc = (e) => {
-            if (e.key === 'Escape') onClose();
+            if (e.key === 'Escape' && !e.defaultPrevented && openModals.at(-1) === id) {
+                e.preventDefault();
+                closeRef.current();
+            }
         };
-        if (isOpen) {
-            window.addEventListener('keydown', handleEsc);
-            document.body.style.overflow = 'hidden';
-        }
+        window.addEventListener('keydown', handleEsc);
         return () => {
             window.removeEventListener('keydown', handleEsc);
-            document.body.style.overflow = '';
+            const index = openModals.indexOf(id);
+            if (index !== -1) openModals.splice(index, 1);
+            if (!openModals.length) document.body.style.overflow = previousOverflow;
         };
-    }, [isOpen, onClose]);
+    }, [isOpen]);
 
     if (!isOpen) return null;
 

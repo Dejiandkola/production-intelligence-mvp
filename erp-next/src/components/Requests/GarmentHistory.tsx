@@ -7,6 +7,8 @@ import { db } from '@/services/db'
 import { Badge, Table, TableCell, TableRow } from '@/components/UI/Table'
 import { amendmentLabel } from '@/lib/amendment-label'
 import ReplacementTag from '@/components/Requests/ReplacementTag'
+import { Pencil } from 'lucide-react'
+import { Modal } from '@/components/UI/Modal'
 
 type Task = {
   id: string
@@ -72,6 +74,7 @@ export default function GarmentHistory({ itemId, readOnly = false, onReadyChange
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [corrections, setCorrections] = useState<Correction[]>([])
+  const [refreshVersion, setRefreshVersion] = useState(0)
 
   useEffect(() => {
     let active = true
@@ -90,7 +93,7 @@ export default function GarmentHistory({ itemId, readOnly = false, onReadyChange
       }
     })
     return () => { active = false }
-  }, [itemId, onReadyChange])
+  }, [itemId, onReadyChange, refreshVersion])
 
   useEffect(() => {
     if (readOnly) return
@@ -115,7 +118,7 @@ export default function GarmentHistory({ itemId, readOnly = false, onReadyChange
     if (!correcting) return
     setSaving(true)
     setError('')
-    const { error: submitError } = await createClient().rpc('submit_work_assignment_correction', {
+    const { error: submitError } = await createClient().rpc('correct_work_assignment', {
       p_assignment_id: correcting.task.id,
       p_category_type_id: categoryId,
       p_task_type_id: taskId,
@@ -128,7 +131,7 @@ export default function GarmentHistory({ itemId, readOnly = false, onReadyChange
       window.dispatchEvent(new Event('pending-requests-count:refresh'))
       setCorrecting(null)
       setSaved(true)
-      setCorrections(rows => [...rows, { id: `new-${Date.now()}`, assignment_id: correcting.task.id, note: note.trim(), status: 'PENDING', created_at: new Date().toISOString(), review_reason: null }])
+      setRefreshVersion(value => value + 1)
     }
   }
 
@@ -140,8 +143,10 @@ export default function GarmentHistory({ itemId, readOnly = false, onReadyChange
 
   return <div className="space-y-5">
     {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
-    {saved && <p className="text-sm text-emerald-700">Correction submitted for Customer Service review.</p>}
-    {!readOnly && correcting && <div className="space-y-3 border-b border-gray-200 pb-5">
+    {saved && <p className="text-sm text-emerald-700">Assignment updated.</p>}
+    <Modal isOpen={!readOnly && Boolean(correcting)} onClose={() => { if (!saving) setCorrecting(null) }} title="Edit assignment" maxWidth="max-w-2xl" scrollable>
+    {!readOnly && correcting && <div className="space-y-3">
+      {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
       <h4 className="font-medium">Correct {correcting.item.item_key}: {correcting.task.task}</h4>
       <div className="grid gap-3 sm:grid-cols-3">
         <label className="text-xs font-medium text-gray-600">Category<select value={categoryId} onChange={event => { setCategoryId(event.target.value); setTaskId('') }} className="mt-1 w-full rounded-md border border-gray-300 p-2 text-sm">{categories.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>
@@ -149,8 +154,9 @@ export default function GarmentHistory({ itemId, readOnly = false, onReadyChange
         <label className="text-xs font-medium text-gray-600">Tailor<select value={tailorId} onChange={event => setTailorId(event.target.value)} className="mt-1 w-full rounded-md border border-gray-300 p-2 text-sm">{tailors.filter(tailor => tailor.active).map(tailor => <option key={tailor.id} value={tailor.id}>{tailor.name}</option>)}</select></label>
       </div>
       <label className="block text-xs font-medium text-gray-600">Reason<textarea value={note} onChange={event => setNote(event.target.value)} rows={2} className="mt-1 w-full rounded-md border border-gray-300 p-2 text-sm" /></label>
-      <div className="flex gap-2"><button type="button" disabled={saving || !note.trim() || !categoryId || !taskId || !tailorId} onClick={() => void submitCorrection()} className="rounded-md bg-maison-primary px-3 py-2 text-sm text-white disabled:opacity-50">Submit correction</button><button type="button" onClick={() => setCorrecting(null)} className="rounded-md border border-gray-300 px-3 py-2 text-sm">Cancel</button></div>
+      <div className="flex gap-2"><button type="button" disabled={saving || !note.trim() || !categoryId || !taskId || !tailorId} onClick={() => void submitCorrection()} className="rounded-md bg-maison-primary px-3 py-2 text-sm text-white disabled:opacity-50">{saving ? 'Saving...' : 'Save changes'}</button><button type="button" disabled={saving} onClick={() => setCorrecting(null)} className="rounded-md border border-gray-300 px-3 py-2 text-sm">Cancel</button></div>
     </div>}
+    </Modal>
     {history.items.filter(item => !amendmentOccurrenceId || item.id === itemId).map(item => ({ ...item,
       tasks: item.tasks.filter(task => !amendmentOccurrenceId || task.amendment_occurrence_id === amendmentOccurrenceId),
       amendments: item.amendments.filter(amendment => !amendmentOccurrenceId || amendment.id === amendmentOccurrenceId),
@@ -178,7 +184,7 @@ export default function GarmentHistory({ itemId, readOnly = false, onReadyChange
             <TableCell className=""><span className="font-medium">{task.task || '-'}</span><span className="block text-xs text-gray-500">{task.category || '-'}</span></TableCell>
             <TableCell className="">{task.tailor || '-'}</TableCell>
             <TableCell className=""><Badge className="" variant={statusVariant(task.status)}>{taskStatus(task.status, Boolean(task.amendment_occurrence_id), Boolean(task.amendment_completed_at))}</Badge><span className="mt-1 block text-xs text-gray-500">{new Date(task.updated_at).toLocaleString()}</span></TableCell>
-            <TableCell className="text-right">{formatMoney(Number(task.pay_amount || 0))}{!readOnly && !task.amendment_completed_at && task.status === 'CREATED' && (task.amendment_occurrence_id || item.replacement_of_item_id) && <button type="button" disabled={saving || corrections.some(correction => correction.assignment_id === task.id && correction.status === 'PENDING')} onClick={() => openCorrection(task, item)} className="ml-2 text-xs text-maison-primary underline disabled:opacity-50">{corrections.some(correction => correction.assignment_id === task.id && correction.status === 'PENDING') ? 'Correction pending' : 'Correct'}</button>}</TableCell>
+            <TableCell className="text-right">{formatMoney(Number(task.pay_amount || 0))}{!readOnly && !task.amendment_completed_at && task.status === 'CREATED' && (task.amendment_occurrence_id || item.replacement_of_item_id) && <button type="button" disabled={saving || corrections.some(correction => correction.assignment_id === task.id && correction.status === 'PENDING')} onClick={() => openCorrection(task, item)} aria-label={`Correct ${task.task || 'task'} assignment`} title={corrections.some(correction => correction.assignment_id === task.id && correction.status === 'PENDING') ? 'Correction pending' : 'Correct assignment'} className="ml-2 inline-flex h-8 w-8 items-center justify-center rounded-md text-maison-primary hover:bg-gray-100 disabled:opacity-50"><Pencil className="h-4 w-4" /></button>}</TableCell>
           </TableRow>)}
         </Table>
       </div> : item.amendments.length === 0 && !item.request_note && <p className="border-t border-gray-100 pt-4 text-sm text-gray-500">No work recorded for this item.</p>}

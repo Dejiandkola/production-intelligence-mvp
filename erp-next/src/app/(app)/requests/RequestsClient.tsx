@@ -13,7 +13,7 @@ import RequestForm, { type ItemOption } from '@/components/Requests/RequestForm'
 import type { WorkRequest } from '@/components/Requests/types'
 import { amendmentLabel } from '@/lib/amendment-label'
 import ReplacementTag from '@/components/Requests/ReplacementTag'
-import GarmentHistory from '@/components/Requests/GarmentHistory'
+import AmendmentWorkspace from '@/components/Requests/AmendmentWorkspace'
 
 type Garment = ItemOption & { ticket_id: string; created_at?: string; replacement_of_item_id?: string | null; replacement_origin_key?: string | null; work_assignments?: { category_types?: { name?: string } }[] }
 type AmendmentTask = { id: string; status: string; amendment_completed_at: string | null; task_types: { name: string } | { name: string }[] | null }
@@ -35,6 +35,15 @@ const statuses = [
   { value: 'OUT_OF_PRODUCTION', label: 'Out of Production' },
   { value: 'ARCHIVED', label: 'Archived' },
 ]
+
+function uniqueItemsById(items: Garment[]) {
+  const seen = new Set<string>()
+  return items.filter(item => {
+    if (seen.has(item.id)) return false
+    seen.add(item.id)
+    return true
+  })
+}
 
 function categoryBadgeClass(name: string) {
   const category = name.toLowerCase()
@@ -59,6 +68,18 @@ function amendmentCompletionStatus(tasks: AmendmentTask[]) {
   return 'MIXED'
 }
 
+const amendmentStatuses = new Set(['CREATED', 'COMPLETED', 'MIXED', 'PAID', 'PARTIALLY_PAID', 'LOCKED', 'NO_TASKS'])
+
+function matchesRequestStatus(request: ListedRequest, status: string) {
+  if (!status) return true
+  if (amendmentStatuses.has(status)) {
+    return request.kind === 'AMENDMENT' && request.status === 'APPROVED'
+      && amendmentCompletionStatus(request.amendment_tasks) === status
+  }
+  if (status === 'APPROVED_REPLACEMENT') return request.kind === 'REPLACEMENT' && request.status === 'APPROVED'
+  return request.status === status
+}
+
 export default function RequestsClient({ userId, canEditAnyRequest }: { userId: string; canEditAnyRequest: boolean }) {
   const [view, setView] = useState<'browse' | 'requests'>('browse')
   const [filters, setFilters] = useState<Filters>(initialFilters)
@@ -77,7 +98,7 @@ export default function RequestsClient({ userId, canEditAnyRequest }: { userId: 
   const [loadingMoreRequests, setLoadingMoreRequests] = useState(false)
   const [hasMoreRequests, setHasMoreRequests] = useState(false)
   const [editing, setEditing] = useState<FormState>(null)
-  const [correctingRequest, setCorrectingRequest] = useState<ListedRequest | null>(null)
+  const [historyItem, setHistoryItem] = useState<Garment | null>(null)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [expandedRequests, setExpandedRequests] = useState<Record<string, boolean>>({})
   const [error, setError] = useState('')
@@ -95,7 +116,13 @@ export default function RequestsClient({ userId, canEditAnyRequest }: { userId: 
     if (activeRequestFilters.customerName) query = query.ilike('items.tickets.customer_name', `%${activeRequestFilters.customerName.trim()}%`)
     if (activeRequestFilters.itemKey) query = query.ilike('items.item_key', `%${activeRequestFilters.itemKey.trim()}%`)
     if (activeRequestFilters.kind) query = query.eq('kind', activeRequestFilters.kind)
-    if (activeRequestFilters.status) query = query.eq('status', activeRequestFilters.status)
+    if (amendmentStatuses.has(activeRequestFilters.status)) {
+      query = query.eq('kind', 'AMENDMENT').eq('status', 'APPROVED')
+    } else if (activeRequestFilters.status === 'APPROVED_REPLACEMENT') {
+      query = query.eq('kind', 'REPLACEMENT').eq('status', 'APPROVED')
+    } else if (activeRequestFilters.status) {
+      query = query.eq('status', activeRequestFilters.status)
+    }
     if (activeRequestFilters.startDate) query = query.gte('created_at', new Date(`${activeRequestFilters.startDate}T00:00:00`).toISOString())
     if (activeRequestFilters.endDate) {
       const end = new Date(`${activeRequestFilters.endDate}T00:00:00`)
@@ -138,33 +165,46 @@ export default function RequestsClient({ userId, canEditAnyRequest }: { userId: 
     })) as ListedRequest[]
   }, [userId, activeRequestFilters])
 
+  const fetchMatchingRequestPage = useCallback(async (offset: number) => {
+    let nextOffset = offset
+    let hasMore = false
+    const matching: ListedRequest[] = []
+    do {
+      const rows = await fetchRequestPage(nextOffset)
+      nextOffset += rows.length
+      hasMore = rows.length === requestPageSize
+      matching.push(...rows.filter(request => matchesRequestStatus(request, activeRequestFilters.status)))
+    } while (hasMore && matching.length < requestPageSize)
+    return { rows: matching, nextOffset, hasMore }
+  }, [fetchRequestPage, activeRequestFilters.status])
+
   const loadRequests = useCallback(async () => {
     const current = ++requestLoadId.current
     setLoadingRequests(true)
     try {
-      const rows = await fetchRequestPage(0)
+      const { rows, nextOffset, hasMore } = await fetchMatchingRequestPage(0)
       if (current !== requestLoadId.current) return
       setRequests(rows)
-      setRequestOffset(rows.length)
-      setHasMoreRequests(rows.length === requestPageSize)
+      setRequestOffset(nextOffset)
+      setHasMoreRequests(hasMore)
       setRequestsError('')
     } catch (cause) {
       if (current === requestLoadId.current) setRequestsError(cause instanceof Error ? cause.message : 'Could not load requests.')
     } finally {
       if (current === requestLoadId.current) setLoadingRequests(false)
     }
-  }, [fetchRequestPage])
+  }, [fetchMatchingRequestPage])
 
   async function loadMoreRequests() {
     if (loadingRequests || loadingMoreRequests || !hasMoreRequests) return
     const current = requestLoadId.current
     setLoadingMoreRequests(true)
     try {
-      const rows = await fetchRequestPage(requestOffset)
+      const { rows, nextOffset, hasMore } = await fetchMatchingRequestPage(requestOffset)
       if (current !== requestLoadId.current) return
       setRequests(current => [...current, ...rows.filter(row => !current.some(existing => existing.id === row.id))])
-      setRequestOffset(current => current + rows.length)
-      setHasMoreRequests(rows.length === requestPageSize)
+      setRequestOffset(nextOffset)
+      setHasMoreRequests(hasMore)
       setRequestsError('')
     } catch (cause) {
       if (current === requestLoadId.current) setRequestsError(cause instanceof Error ? cause.message : 'Could not load more requests.')
@@ -206,7 +246,7 @@ export default function RequestsClient({ userId, canEditAnyRequest }: { userId: 
         const statuses = new Map((data || []).map(task => [task.id, task]))
         setRequests(current => current.map(row => row.id === request.id
           ? { ...row, amendment_tasks: row.amendment_tasks.map(task => ({ ...task, ...statuses.get(task.id) })) }
-          : row))
+          : row).filter(row => matchesRequestStatus(row, activeRequestFilters.status)))
       }
     }
     setUpdatingRequestId(null)
@@ -241,7 +281,7 @@ export default function RequestsClient({ userId, canEditAnyRequest }: { userId: 
       try {
         const result = await db.getTicketPaginatedItems(activeFilters, 1, pageSize)
         if (current === requestId.current) {
-          setGarments(result.items || [])
+          setGarments(uniqueItemsById(result.items || []))
           setTotalTickets(result.totalTickets)
           setPage(1)
           setError('')
@@ -287,7 +327,7 @@ export default function RequestsClient({ userId, canEditAnyRequest }: { userId: 
       const nextPage = page + 1
       const result = await db.getTicketPaginatedItems(activeFilters, nextPage, pageSize)
       if (current === requestId.current) {
-        setGarments(rows => [...rows, ...(result.items || [])])
+        setGarments(rows => uniqueItemsById([...rows, ...(result.items || [])]))
         setPage(nextPage)
       }
     } catch (cause) {
@@ -299,6 +339,10 @@ export default function RequestsClient({ userId, canEditAnyRequest }: { userId: 
 
   function openRequest(item: Garment, kind: 'AMENDMENT' | 'REPLACEMENT') {
     setEditing({ item, kind })
+  }
+
+  function openHistory(item: Garment) {
+    setHistoryItem(item)
   }
 
   const selectedRequest = editing && 'proposed_assignments' in editing ? editing : null
@@ -313,11 +357,8 @@ export default function RequestsClient({ userId, canEditAnyRequest }: { userId: 
     </div>
     {view === 'browse' && error && <p role="alert" className="text-sm text-red-700">{error}</p>}
     {view === 'requests' && requestsError && <p role="alert" className="text-sm text-red-700">{requestsError}</p>}
-    <Modal isOpen={Boolean(correctingRequest)} onClose={() => setCorrectingRequest(null)} title="Correct assignment" maxWidth="max-w-4xl" scrollable>
-      {correctingRequest && <>
-        <p className="mb-4 text-sm text-gray-600">Choose a task to correct its task or tailor. Give a reason and submit it for Customer Service review.</p>
-        <GarmentHistory key={correctingRequest.id} itemId={correctingRequest.item_id} amendmentOccurrenceId={correctingRequest.approved_snapshot?.amendment_occurrence_id} />
-      </>}
+    <Modal isOpen={Boolean(historyItem)} onClose={() => setHistoryItem(null)} title="Amendments" maxWidth="max-w-4xl" scrollable>
+      {historyItem && <AmendmentWorkspace key={historyItem.id} item={historyItem} onClose={() => setHistoryItem(null)} onSaved={() => void loadRequests()} />}
     </Modal>
     <Modal isOpen={Boolean(editing)} onClose={() => setEditing(null)} title="" maxWidth="max-w-4xl" scrollable>
       {editing && <RequestForm key={selectedRequest?.id || `${selectedGarment?.id}-${selectedKind}`} request={selectedRequest} selectedItem={selectedGarment} initialKind={selectedKind} inModal onCancel={() => setEditing(null)} onSaved={() => { setEditing(null); setView('requests'); void loadRequests() }} />}
@@ -358,14 +399,13 @@ export default function RequestsClient({ userId, canEditAnyRequest }: { userId: 
               {group.items.map(item => {
                 const eligible = !['ARCHIVED', 'CANCELLED'].includes(item.raw_status || item.status)
                 const categories = [...new Set((item.work_assignments || []).map(assignment => assignment.category_types?.name).filter(Boolean))]
-                const hasAmendment = categories.some(name => name?.toLowerCase() === 'amendment')
-                return <TableRow key={item.id} className="" onClick={undefined}>
-                  <TableCell className="font-mono text-xs font-medium"><span className="block">{item.item_key || '-'}</span>{item.replacement_of_item_id && <ReplacementTag originalItemKey={item.replacement_origin_key} className="mt-1" />}</TableCell>
+                return <TableRow key={item.id} className="" onClick={() => void openHistory(item)}>
+                  <TableCell className="font-mono text-xs font-medium"><button type="button" onClick={event => { event.stopPropagation(); void openHistory(item) }} aria-label={`View work history for ${item.item_key || 'item'}`} className="text-left hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-maison-primary">{item.item_key || '-'}</button>{item.replacement_of_item_id && <ReplacementTag originalItemKey={item.replacement_origin_key} className="mt-1" />}</TableCell>
                   <TableCell className="">{item.product_type_name || '-'}</TableCell>
                   <TableCell className="whitespace-normal"><div className="flex flex-wrap gap-1">{categories.length ? categories.map(name => <Badge key={name} variant="neutral" className={categoryBadgeClass(name || '')}>{name}</Badge>) : <span className="text-gray-300">-</span>}</div></TableCell>
                   <TableCell className=""><Badge className="" variant={item.status === 'ARCHIVED' ? 'neutral' : item.status === 'CANCELLED' ? 'danger' : item.status === 'NEW' ? 'warning' : item.status === 'IN_PRODUCTION' ? 'brand' : 'success'}>{item.status === 'OUT_OF_PRODUCTION' ? 'Out of Production' : item.status === 'IN_PRODUCTION' ? 'In Production' : item.status === 'NEW' ? 'New' : item.status}</Badge></TableCell>
                   <TableCell className="text-sm text-gray-500">{item.created_at ? format(new Date(item.created_at), 'MMM d, yyyy') : '-'}</TableCell>
-                  <TableCell className=""><div className="flex flex-wrap gap-2"><Button type="button" size="sm" variant="secondary" className="" title={hasAmendment ? 'Further amendments are on hold' : undefined} isLoading={false} disabled={!eligible || hasAmendment} onClick={() => openRequest(item, 'AMENDMENT')}>Amendment</Button><Button type="button" size="sm" variant="secondary" className="" isLoading={false} disabled={!eligible} onClick={() => openRequest(item, 'REPLACEMENT')}>Replacement</Button></div></TableCell>
+                  <TableCell className=""><div className="flex flex-wrap gap-2" onClick={event => event.stopPropagation()}><Button type="button" size="sm" variant="secondary" className="" isLoading={false} disabled={false} onClick={() => openHistory(item)}>Amendment</Button><Button type="button" size="sm" variant="secondary" className="" isLoading={false} disabled={!eligible} onClick={() => openRequest(item, 'REPLACEMENT')}>Replacement</Button></div></TableCell>
                 </TableRow>
               })}
             </Table>}
@@ -387,10 +427,24 @@ export default function RequestsClient({ userId, canEditAnyRequest }: { userId: 
             <input value={requestFilters.itemKey} onChange={event => setRequestFilters(value => ({ ...value, itemKey: event.target.value }))} placeholder="Search item..." className="mt-1 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm" />
           </label>
           <label className="min-w-[145px] flex-1 text-xs font-semibold text-gray-500">Type
-            <select value={requestFilters.kind} onChange={event => setRequestFilters(value => ({ ...value, kind: event.target.value }))} className="mt-1 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm"><option value="">All types</option><option value="AMENDMENT">Amendment</option><option value="REPLACEMENT">Replacement</option></select>
+            <select value={requestFilters.kind} onChange={event => setRequestFilters(value => ({ ...value, kind: event.target.value, status: '' }))} className="mt-1 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm"><option value="">All types</option><option value="AMENDMENT">Amendment</option><option value="REPLACEMENT">Replacement</option></select>
           </label>
           <label className="min-w-[145px] flex-1 text-xs font-semibold text-gray-500">Status
-            <select value={requestFilters.status} onChange={event => setRequestFilters(value => ({ ...value, status: event.target.value }))} className="mt-1 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm"><option value="">All statuses</option><option value="PENDING">Pending</option><option value="APPROVED">Assigned / Approved</option><option value="REJECTED">Rejected</option></select>
+            <select value={requestFilters.status} onChange={event => setRequestFilters(value => ({ ...value, status: event.target.value }))} className="mt-1 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm">
+              <option value="">All statuses</option>
+              {requestFilters.kind !== 'REPLACEMENT' && <>
+                <option value="CREATED">In progress</option>
+                <option value="COMPLETED">Completed</option>
+                <option value="MIXED">Partly completed</option>
+                <option value="PAID">Paid</option>
+                <option value="PARTIALLY_PAID">Partly paid</option>
+                <option value="LOCKED">Unavailable</option>
+                <option value="NO_TASKS">No tasks assigned</option>
+              </>}
+              <option value="PENDING">Pending</option>
+              {requestFilters.kind !== 'AMENDMENT' && <option value="APPROVED_REPLACEMENT">Approved replacement</option>}
+              <option value="REJECTED">Rejected</option>
+            </select>
           </label>
           <div className="min-w-[240px] flex-1"><span className="mb-1 block text-xs font-semibold text-gray-500">Submitted Date</span><div className="grid grid-cols-2 gap-2"><input aria-label="Submitted from" type="date" value={requestFilters.startDate} onChange={event => setRequestFilters(value => ({ ...value, startDate: event.target.value }))} className="min-w-0 w-full rounded-md border border-gray-200 bg-white px-2 py-2 text-sm" /><input aria-label="Submitted to" type="date" value={requestFilters.endDate} onChange={event => setRequestFilters(value => ({ ...value, endDate: event.target.value }))} className="min-w-0 w-full rounded-md border border-gray-200 bg-white px-2 py-2 text-sm" /></div></div>
           <Button type="button" variant="ghost" title="Clear request filters" aria-label="Clear request filters" onClick={() => setRequestFilters(initialRequestFilters)} className="bg-gray-50 px-3" isLoading={false} disabled={false}><FilterX className="h-4 w-4" /></Button>
@@ -412,11 +466,12 @@ export default function RequestsClient({ userId, canEditAnyRequest }: { userId: 
             {isExpanded && <Table headers={['Item', 'Type', 'Note / Task', 'Submitted by', 'Submitted', 'Status', 'Actions']} className="" tableClassName="">
               {group.requests.map(request => {
                 const completionStatus = amendmentCompletionStatus(request.amendment_tasks)
-                const canUpdateCompletion = request.kind === 'AMENDMENT' && request.status === 'APPROVED' && ['CREATED', 'COMPLETED', 'MIXED'].includes(completionStatus) && request.amendment_tasks.every(task => task.status === 'CREATED')
+                const activeTasks = request.amendment_tasks
+                const canUpdateCompletion = request.kind === 'AMENDMENT' && request.status === 'APPROVED' && ['CREATED', 'COMPLETED', 'MIXED'].includes(completionStatus) && activeTasks.every(task => task.status === 'CREATED')
                 return <TableRow key={request.id} className="" onClick={undefined}>
                   <TableCell className="font-mono text-xs"><span className="block">{request.items?.item_key || '-'}</span>{request.replacement_of_item_id && <ReplacementTag originalItemKey={request.replacement_origin_key} className="mt-1" />}</TableCell>
                   <TableCell className=""><Badge className="" variant={request.kind === 'AMENDMENT' ? 'warning' : 'brand'}>{request.kind === 'AMENDMENT' ? amendmentLabel(request.amendment_ordinal) : 'Replacement'}</Badge></TableCell>
-                  <TableCell className=""><div className="max-w-xs whitespace-normal text-gray-700">{request.note}{request.review_reason && <p className="mt-1 text-xs text-red-700">Rejected: {request.review_reason}</p>}{request.kind === 'AMENDMENT' && request.status === 'APPROVED' && request.amendment_tasks.length > 0 && <p className="mt-1 text-xs text-gray-500">{request.amendment_tasks.map(amendmentTaskName).join(', ')}</p>}</div></TableCell>
+                  <TableCell className=""><div className="max-w-xs whitespace-normal text-gray-700">{request.note}{request.review_reason && <p className="mt-1 text-xs text-red-700">Rejected: {request.review_reason}</p>}{request.kind === 'AMENDMENT' && request.status === 'APPROVED' && activeTasks.length > 0 && <p className="mt-1 text-xs text-gray-500">{activeTasks.map(amendmentTaskName).join(', ')}</p>}</div></TableCell>
                   <TableCell className="text-gray-600">{request.submitted_by}</TableCell>
                   <TableCell className="text-gray-500">{format(new Date(request.created_at), 'MMM d, yyyy')}</TableCell>
                   <TableCell className="">
@@ -434,14 +489,14 @@ export default function RequestsClient({ userId, canEditAnyRequest }: { userId: 
                         {completionStatus === 'PAID' && <option value="PAID">Paid</option>}
                         {completionStatus === 'PARTIALLY_PAID' && <option value="PARTIALLY_PAID">Partly paid</option>}
                         {completionStatus === 'LOCKED' && <option value="LOCKED">Unavailable</option>}
-                        {completionStatus === 'NO_TASKS' && <option value="NO_TASKS">No linked tasks</option>}
+                        {completionStatus === 'NO_TASKS' && <option value="NO_TASKS">No tasks assigned</option>}
                       </select>
                       <ChevronDown aria-hidden="true" className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 opacity-60" />
                     </span> : <Badge className="" variant={request.status === 'APPROVED' ? 'success' : request.status === 'REJECTED' ? 'danger' : 'warning'}>{request.status === 'PENDING' ? 'Pending' : request.status === 'REJECTED' ? 'Rejected' : 'Approved'}</Badge>}
                   </TableCell>
                   <TableCell className="">
-                    {request.kind === 'AMENDMENT' && request.status === 'APPROVED' && completionStatus === 'CREATED' && request.amendment_tasks.every(task => task.status === 'CREATED') && request.approved_snapshot?.amendment_occurrence_id && <button type="button" disabled={Boolean(updatingRequestId)} onClick={() => setCorrectingRequest(request)} className="text-sm text-maison-primary underline disabled:opacity-50">Correct assignment</button>}
-                    {request.kind === 'AMENDMENT' && request.status === 'APPROVED' && ['COMPLETED', 'MIXED'].includes(completionStatus) && <span className="text-xs text-gray-500">{request.amendment_tasks.every(task => task.status === 'CREATED') ? 'Return to In progress to correct an assignment.' : 'Accounts must reverse its decision before completion or assignments can change.'}</span>}
+                    {request.kind === 'AMENDMENT' && request.status === 'APPROVED' && request.items && <button type="button" disabled={Boolean(updatingRequestId)} onClick={() => openHistory({ id: request.item_id, ticket_id: '', item_key: request.items!.item_key, status: request.items!.status, product_type_id: request.items!.product_type_id, ticket_number: request.items!.tickets?.ticket_number, customer_name: request.items!.tickets?.customer_name || undefined, product_type_name: request.items!.product_types?.name })} className="text-sm text-maison-primary underline disabled:opacity-50">Manage amendments</button>}
+                    {request.kind === 'AMENDMENT' && request.status === 'APPROVED' && ['COMPLETED', 'MIXED'].includes(completionStatus) && <span className="text-xs text-gray-500">{activeTasks.every(task => task.status === 'CREATED') ? 'Return to In progress to correct an assignment.' : 'Accounts must reverse its decision before completion or assignments can change.'}</span>}
                     {request.status === 'PENDING' && (request.created_by === userId || canEditAnyRequest) && <button type="button" onClick={() => setEditing(request)} aria-label={`Edit request for ${request.items?.item_key || 'item'}`} title="Edit request" className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-maison-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-maison-primary"><Pencil className="h-4 w-4" /></button>}
                   </TableCell>
                 </TableRow>

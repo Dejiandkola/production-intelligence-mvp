@@ -36,6 +36,28 @@ type Tailor = { id: string; name: string; active: boolean }
 type TaskGroup = { category_type_id: string; task_type_ids: string[]; tailor_id: string }
 const emptyGroup = (): TaskGroup => ({ category_type_id: '', task_type_ids: [], tailor_id: '' })
 
+function HistoryScrollArea({ children }: { children: React.ReactNode }) {
+  const viewport = useRef<HTMLDivElement>(null)
+  const content = useRef<HTMLDivElement>(null)
+  const [hasMore, setHasMore] = useState(false)
+  function updateOverflow() {
+    const element = viewport.current
+    if (element) setHasMore(element.scrollHeight - element.scrollTop - element.clientHeight > 4)
+  }
+  useEffect(() => {
+    const observer = new ResizeObserver(updateOverflow)
+    if (viewport.current) observer.observe(viewport.current)
+    if (content.current) observer.observe(content.current)
+    return () => observer.disconnect()
+  }, [])
+  return <div className="overflow-hidden rounded-md border border-gray-300 bg-gray-50 shadow-inner">
+    <div ref={viewport} tabIndex={0} role="region" aria-label="Item work history" onScroll={updateOverflow} className="history-scroll-area max-h-72 overflow-y-scroll p-3 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-maison-primary" style={{ scrollbarGutter: 'stable' }}>
+      <div ref={content}>{children}</div>
+    </div>
+    {hasMore && <button type="button" title="More history" aria-label="Scroll down through history" onClick={() => viewport.current?.scrollBy({ top: viewport.current.clientHeight * 0.75, behavior: 'smooth' })} className="flex h-7 w-full items-center justify-center border-t border-gray-300 bg-gray-100 text-gray-600 hover:bg-gray-200 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-maison-primary"><ChevronDown className="h-4 w-4" /></button>}
+  </div>
+}
+
 function groupAssignments(assignments?: ProposedAssignment[], kind?: 'AMENDMENT' | 'REPLACEMENT'): TaskGroup[] {
   if (!assignments?.length) return [emptyGroup()]
   if (kind === 'REPLACEMENT') return assignments.map(assignment => ({
@@ -113,6 +135,7 @@ export default function RequestForm({
   selectedItem,
   initialKind,
   inModal = false,
+  additionalRound,
   onSaved,
   onCancel,
 }: {
@@ -120,6 +143,7 @@ export default function RequestForm({
   selectedItem?: ItemOption | null
   initialKind?: 'AMENDMENT' | 'REPLACEMENT'
   inModal?: boolean
+  additionalRound?: { previous_occurrence_id: string | null; previous_completed: boolean; can_attest: boolean; tasks: { category_type_id: string; task_type_id: string; task: string }[] }
   onSaved: () => void
   onCancel: () => void
 }) {
@@ -146,6 +170,7 @@ export default function RequestForm({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [historyReady, setHistoryReady] = useState(false)
+  const [attested, setAttested] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -183,6 +208,7 @@ export default function RequestForm({
     (kind === 'REPLACEMENT' || rate.category_name?.toLowerCase() === 'amendment')
   )
   const categories = [...new Map(availableRates.map(rate => [rate.category_type_id, rate.category_name])).entries()]
+  const hasRepeatedTasks = Boolean(additionalRound && groups.some(group => group.task_type_ids.some(id => additionalRound.tasks.some(task => task.category_type_id === group.category_type_id && task.task_type_id === id))))
 
   function updateGroup(index: number, patch: Partial<TaskGroup>) {
     setGroups(previous => previous.map((group, rowIndex) => rowIndex === index ? { ...group, ...patch } : group))
@@ -201,10 +227,21 @@ export default function RequestForm({
       setError('Each task can only be selected once per request.')
       return
     }
+    if (additionalRound && !additionalRound.previous_completed && (!additionalRound.can_attest || !attested)) {
+      setError('Confirm the previous amendment was physically completed before starting another round.')
+      return
+    }
     setSaving(true)
     setError('')
     const supabase = createClient()
-    const { error: saveError } = await supabase.rpc('save_work_change_request', {
+    const { error: saveError } = additionalRound ? await supabase.rpc('submit_additional_amendment', {
+      p_item_id: item.id,
+      p_previous_occurrence_id: additionalRound.previous_occurrence_id,
+      p_reason: note,
+      p_assignments: assignments,
+      p_confirm_separate_work: true,
+      p_attest_prior_completion: attested,
+    }) : await supabase.rpc('save_work_change_request', {
       p_request_id: request?.id || null,
       p_item_id: item.id,
       p_kind: kind,
@@ -240,16 +277,16 @@ export default function RequestForm({
       </div>}
       {item && <div>
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-3"><h2 className="font-serif text-xl text-maison-primary">{item.item_key}</h2><span className="rounded bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700">{item.product_type_name || 'Garment'}</span><span className="rounded bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700">{kind === 'AMENDMENT' ? request?.amendment_ordinal == null ? 'Amendment' : amendmentLabel(request.amendment_ordinal) : 'Replacement'}</span></div>
+          <div className="flex flex-wrap items-center gap-3"><h2 className="font-serif text-xl text-maison-primary">{item.item_key}</h2><span className="rounded bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700">{item.product_type_name || 'Garment'}</span><span className="rounded bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700">{additionalRound ? 'Another amendment round' : kind === 'AMENDMENT' ? request?.amendment_ordinal == null ? 'Amendment' : amendmentLabel(request.amendment_ordinal) : 'Replacement'}</span></div>
           {item.replacement_of_item_id && <ReplacementTag originalItemKey={item.replacement_origin_key} className="mt-2" />}
           <p className="mt-1 text-sm text-maison-secondary">Ticket: {item.ticket_number} | Customer: {item.customer_name || 'Customer'}</p>
         </div>
       </div>}
       {item && <section aria-label="Item history" className="space-y-2 border-y border-gray-200 py-4">
         <h3 className="text-sm font-semibold text-maison-primary">Item history</h3>
-        <div className="max-h-72 overflow-y-auto pr-2">
+        <HistoryScrollArea key={item.id}>
           <GarmentHistory key={item.id} itemId={item.id} readOnly onReadyChange={setHistoryReady} />
-        </div>
+        </HistoryScrollArea>
       </section>}
       {(request || !selectedItem) && <label className="block text-sm font-medium text-maison-secondary">Type
         <select value={kind} onChange={event => { setKind(event.target.value as 'AMENDMENT' | 'REPLACEMENT'); setGroups([emptyGroup()]) }} className="mt-1.5 block w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-maison-primary/20">
@@ -257,7 +294,7 @@ export default function RequestForm({
           <option value="REPLACEMENT">Replacement</option>
         </select>
       </label>}
-      <label className="block text-sm font-medium text-maison-secondary">Note *
+      <label className="block text-sm font-medium text-maison-secondary">{additionalRound ? 'Reason for another round *' : 'Note *'}
         <textarea required maxLength={2000} rows={3} value={note} onChange={event => setNote(event.target.value)} className="mt-1.5 block w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-maison-primary/20" />
       </label>
       <div className="flex items-center justify-between gap-3">
@@ -292,9 +329,14 @@ export default function RequestForm({
           </div>
         })}
       </div>
+      {additionalRound && (!additionalRound.previous_completed || hasRepeatedTasks) && <div className="space-y-3 border-t border-gray-200 pt-4 text-sm text-maison-secondary">
+        {!additionalRound.previous_completed && additionalRound.can_attest && <label className="flex items-start gap-2"><input type="checkbox" checked={attested} onChange={event => setAttested(event.target.checked)} className="mt-1" /><span>I confirm the previous amendment was physically completed.</span></label>}
+        {!additionalRound.previous_completed && !additionalRound.can_attest && <p role="alert" className="text-red-700">Confirm the previous amendment as completed before starting another round.</p>}
+        {hasRepeatedTasks && <p className="text-amber-700">One or more selected tasks appeared in the previous round. Confirm this is genuinely new work.</p>}
+      </div>}
       <div className="flex flex-wrap justify-end gap-2 border-t border-gray-100 pt-4">
         {inModal && <button type="button" onClick={onCancel} className="rounded-lg px-4 py-2 text-sm font-medium text-maison-secondary hover:bg-gray-100">Cancel</button>}
-        <button type="submit" disabled={saving || loadingOptions || !item || !historyReady} className="rounded-lg bg-maison-primary px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-black disabled:opacity-50">{saving ? 'Saving...' : request ? 'Save Changes' : kind === 'AMENDMENT' ? 'Assign Amendment' : 'Submit Request'}</button>
+        <button type="submit" disabled={saving || loadingOptions || !item || !historyReady || Boolean(additionalRound && !additionalRound.previous_completed && !additionalRound.can_attest)} className="rounded-lg bg-maison-primary px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-black disabled:opacity-50">{saving ? 'Saving...' : additionalRound ? 'Assign another round' : request ? 'Save Changes' : kind === 'AMENDMENT' ? 'Assign Amendment' : 'Submit Request'}</button>
       </div>
     </form>
   )

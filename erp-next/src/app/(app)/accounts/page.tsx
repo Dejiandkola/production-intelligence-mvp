@@ -13,6 +13,7 @@ import { Badge, Table, TableCell, TableRow } from '@/components/UI/Table';
 import { Modal } from '@/components/UI/Modal';
 import { formatMoney } from '@/lib/formatters';
 import ReplacementTag from '@/components/Requests/ReplacementTag';
+import { amendmentLabel } from '@/lib/amendment-label';
 
 const TAILOR_PAGE_SIZE = 25;
 const SEARCH_DEBOUNCE_MS = 350;
@@ -744,7 +745,9 @@ export default function PendingVerification() {
                                                 <TableCell>{task.customer_name}</TableCell>
                                                 <TableCell>
                                                     <div className="font-medium">{task.task_type_name}</div>
-                                                    <div className="text-xs text-gray-500">{task.category_name}</div>
+                                                    {task.amendment_ordinal > 0
+                                                        ? <Badge variant="warning" className="mt-1">{amendmentLabel(task.amendment_ordinal)}</Badge>
+                                                        : <div className="text-xs text-gray-500">{task.amendment_occurrence_id ? amendmentLabel(task.amendment_ordinal) : task.category_name}</div>}
                                                 </TableCell>
                                                 <TableCell>{task.tailor_name || 'Unassigned'}</TableCell>
                                                 <TableCell>{renderPayableCell(task)}</TableCell>
@@ -779,7 +782,7 @@ export default function PendingVerification() {
                             <div className="flex flex-wrap items-center gap-2">
                                 <span className="font-mono text-xs text-maison-primary">{activeNegotiatedTask.item_key}</span>
                                 {activeNegotiatedTask.replacement_of_item_id && <ReplacementTag originalItemKey={activeNegotiatedTask.replacement_origin_key} />}
-                                <Badge variant="neutral">{activeNegotiatedTask.category_name || 'Uncategorised'}</Badge>
+                                <Badge variant={activeNegotiatedTask.amendment_ordinal > 0 ? 'warning' : 'neutral'}>{activeNegotiatedTask.amendment_occurrence_id ? amendmentLabel(activeNegotiatedTask.amendment_ordinal) : activeNegotiatedTask.category_name || 'Uncategorised'}</Badge>
                                 <Badge variant={getTaskPaySourceVariant(getTaskPaySourceLabel(activeNegotiatedTask))}>
                                     {getTaskPaySourceLabel(activeNegotiatedTask)}
                                 </Badge>

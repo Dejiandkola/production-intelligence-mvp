@@ -2905,10 +2905,22 @@ async updateTicket(id, { customer_name }) {
         }
 
         const rows = data || []
+        const occurrenceIds = [...new Set(rows.map(row => row.task?.amendment_occurrence_id).filter(Boolean))]
+        const ordinals = new Map()
+        if (occurrenceIds.length) {
+            const { data: occurrences, error: occurrenceError } = await supabase
+                .from('amendment_occurrences').select('id, ordinal').in('id', occurrenceIds)
+            if (occurrenceError) throw new Error('Could not load amendment round numbers. Refresh and try again.')
+            for (const occurrence of occurrences || []) ordinals.set(occurrence.id, occurrence.ordinal)
+            if (occurrenceIds.some(id => !ordinals.has(id))) {
+                throw new Error('An amendment round number is unavailable. Refresh and try again.')
+            }
+        }
 
         return {
             data: await withTaskReplacementOrigins(rows.map(row => row.task || {}).map(task => ({
                 ...task,
+                amendment_ordinal: task.amendment_occurrence_id ? ordinals.get(task.amendment_occurrence_id) : null,
                 raw_status: task.status,
                 status: normalizeAssignmentStatus(task.status),
                 task_name: task.task_type_name,
